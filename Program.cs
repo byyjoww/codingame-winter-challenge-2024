@@ -65,10 +65,17 @@ class Player
                     };
 
                     // New organism was created last turn
-                    if (!organisms.Any(x => x.id == organRootId))
-                    {
-                        Ownership organismOwner = (Ownership)owner;                        
-                        organisms.Add(new Organism
+                    var organism = organisms.FirstOrDefault(x => x.id == organRootId);
+                    if (organism == null)
+                    {                        
+                        Ownership organismOwner = (Ownership)owner;
+                        var behaviour = organismOwner == Ownership.Player 
+                            ? sporeQueue.TryDequeue(out var bh) 
+                                ? bh
+                                : Organism.BehaviourType.Harvest
+                            : default;      
+                        
+                        organism = new Organism
                         {
                             id = organRootId,
                             root = default,
@@ -80,15 +87,14 @@ class Player
                             proteins = organismOwner == Ownership.Player
                                 ? playerProteins
                                 : opponentProteins,
-                            Behaviour = organismOwner == Ownership.Player 
-                                ? sporeQueue.Dequeue()
-                                : default,
-                        });
+                            Behaviour = behaviour,
+                        };
+
+                        organisms.Add(organism);
+                        Console.Error.WriteLine($"Created new organism {organRootId} with behaviour {behaviour}");
                     }
 
-                    organisms
-                        .First(x => x.id == organRootId)
-                        .AddOrgan(organ);
+                    organism.AddOrgan(organ);
                 }
             }
 
@@ -146,10 +152,16 @@ public interface IBehaviour
 public abstract class BaseBehaviour : IBehaviour
 {
     protected Queue<Action> plan = new Queue<Action>();
+    protected Organism organism;
+    protected Map map;
+    protected ProteinReserve proteins;
 
-    public Organism organism;
-    public Map map;
-    public ProteinReserve proteins;
+    public BaseBehaviour(Organism organism, Map map, ProteinReserve proteins)
+    {
+        this.organism = organism;
+        this.map = map;
+        this.proteins = proteins;
+    }
 
     public abstract void Plan();
 
@@ -239,8 +251,49 @@ public abstract class BaseBehaviour : IBehaviour
 // Responsible for harvesting one of each protein and dividing
 public class HarvestBehaviour : BaseBehaviour
 {
-    private Dictionary<Protein.ProteinType, int> proteinsBeingHarvested = new Dictionary<Protein.ProteinType, int>();
-    private Dictionary<Organ, Dictionary<Protein, int>> organToProteinDistance = new Dictionary<Organ, Dictionary<Protein, int>>();
+    private List<Protein> harvestTargets = new List<Protein>();
+
+    public HarvestBehaviour(Organism organism, Map map, ProteinReserve proteins) : base(organism, map, proteins)
+    {
+        var unharvestedProteins = map.Proteins
+            .Where(x => !x.isPlayerHarvested)
+            .ToArray();
+
+        var pathsToProteins = unharvestedProteins
+            .Select(x => (protein: x, path: map.CalculatePathHeuristic(organism.root.position, x.position)))
+            .Where(x => x.path != null)                
+            .OrderBy(x => x.path.Count)
+            .ToArray();
+
+        var proteinsToCollect = new Protein.ProteinType[] 
+        {
+            Protein.ProteinType.A, 
+            Protein.ProteinType.B, 
+            Protein.ProteinType.C, 
+            Protein.ProteinType.D,
+        };
+
+        var harvestTargetsSet = new HashSet<Protein>();
+        var harvestTargetsWithDistance = new Dictionary<Protein, int>();
+        foreach (var protType in proteinsToCollect)
+        {
+            var prots = pathsToProteins
+                .Where(x => x.protein.type == protType && !harvestTargetsSet.Contains(x.protein))                
+                .ToArray();
+
+            if (prots.Length > 0)
+            {
+                var p = prots.First();
+                harvestTargetsWithDistance.Add(p.protein, p.path.Count);
+                harvestTargetsSet.Add(p.protein);
+            }
+        }
+
+        harvestTargets = harvestTargetsWithDistance
+            .OrderBy(x => x.Value)
+            .Select(x => x.Key)
+            .ToList();
+    }
 
     public override void Plan()
     {
@@ -312,10 +365,9 @@ public class HarvestBehaviour : BaseBehaviour
 
             Vector2 dir = path[1] - next;
             organism.GrowHarvester(organ, next, Map.GetDirectionKey(dir));
-            if (!proteinsBeingHarvested.TryAdd(protein.type, 1))
-            {
-                proteinsBeingHarvested[protein.type]++;
-            }
+
+            Protein targetToRemove = harvestTargets.FirstOrDefault(x => x.type == protein.type);
+            harvestTargets.Remove(targetToRemove);
         }
         else if (organism.CanGrow(Organ.OrganType.Basic))
         {
@@ -332,18 +384,15 @@ public class HarvestBehaviour : BaseBehaviour
     protected bool TryFindClosestUnharvestedProtein(Protein.ProteinType? priority, out (Organ organ, Protein protein, List<Vector2> path)? target)
     {
         target = null;
-        var unharvestedProteins = map.Proteins
-            .Where(x => !x.isPlayerHarvested)
-            .ToArray();
 
-        Console.Error.WriteLine($"Checking {organism.organs.Count} organs and {unharvestedProteins.Length} proteins");
+        Console.Error.WriteLine($"Checking {organism.organs.Count} organs and {harvestTargets.Count} proteins");
         foreach (Organ org in organism.organs)
-        {            
-            var pathsToProteins = unharvestedProteins
+        {
+            var pathsToProteins = harvestTargets
                 .Select(x => (protein: x, path: map.CalculatePathHeuristic(org.position, x.position)))
-                .Where(x => x.path != null)                
-                .OrderBy(x => 
-                    priority.HasValue && x.protein.type == priority.Value 
+                .Where(x => x.path != null)
+                .OrderBy(x =>
+                    priority.HasValue && x.protein.type == priority.Value
                         ? 0
                         : 1)
                 .ThenBy(x => x.path.Count)
@@ -366,6 +415,11 @@ public class HarvestBehaviour : BaseBehaviour
 // Responsible for setting up a defensive perimeter
 public class DefensiveBehaviour : BaseBehaviour 
 {
+    public DefensiveBehaviour(Organism organism, Map map, ProteinReserve proteins) : base(organism, map, proteins)
+    {
+
+    }
+
     public override void Plan()
     {
         Console.Error.WriteLine("Evaluating Defense...");
@@ -434,6 +488,7 @@ public class Organism
 {
     private BehaviourType behaviourType;
     private IBehaviour behaviour;
+    private HashSet<int> organIds = new HashSet<int>();
 
     public int id;
     public Organ root;
@@ -462,8 +517,14 @@ public class Organism
 
     public void AddOrgan(Organ organ)
     {
+        if (organIds.Contains(organ.id))
+        {
+            return;
+        }
+
         organ.organism = this;
         organs.Add(organ);
+        organIds.Add(organ.id);
 
         if (organ.type == Organ.OrganType.Root)
         {
@@ -477,19 +538,9 @@ public class Organism
         {
             case BehaviourType.Harvest:
             default:
-                return new HarvestBehaviour
-                {
-                    organism = this,
-                    map = map,
-                    proteins = proteins,
-                };
+                return new HarvestBehaviour(this, map, proteins);
             case BehaviourType.Defensive:
-                return new DefensiveBehaviour
-                {
-                    organism = this,
-                    map = map,
-                    proteins = proteins,
-                };
+                return new DefensiveBehaviour(this, map, proteins);
         }
     }
 
