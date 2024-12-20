@@ -149,19 +149,19 @@ public class Organism
 
     public void Act()
     {
-        var availableUnharvestedProteins = map.Proteins
+        var unharvestedProteins = map.Proteins
             .Where(x => !x.isPlayerHarvested)
             .ToArray();
 
-        if (availableUnharvestedProteins.Length > 0 && TryFindClosestUnharvestedProtein(out var closest))
-        {                  
-            HarvestProtein( closest.Value.protein, closest.Value.organ, closest.Value.path);
-        }
-        else if (map.OpponentOrgans.Count > 0 && (TryFindClosestOpponentRoot(out var closestOrgan) || TryFindClosestOpponentOrgan(out closestOrgan)))
+        if (unharvestedProteins.Length > 0 && TryFindClosestUnharvestedProtein(out var protein))
         {
-            MoveToOrgan(closestOrgan.Value.organ, closestOrgan.Value.oppOrgan, closestOrgan.Value.path);
+            HarvestProtein(protein.Value.protein, protein.Value.organ, protein.Value.path);
         }
-        else 
+        else if (map.OpponentOrgans.Count > 0 && (TryFindClosestOpponentRoot(out var organ) || TryFindClosestOpponentOrgan(out organ)))
+        {
+            MoveToOrgan(organ.Value.organ, organ.Value.oppOrgan, organ.Value.path);
+        }
+        else
         {
             Grow();
         }
@@ -172,7 +172,7 @@ public class Organism
         Console.Error.WriteLine($"Harvesting protein {protein.type} at {protein.position} | path: [{string.Join(", ", path.Select(x => x).ToArray())}]");
 
         Vector2 next = path.FirstOrDefault();
-        
+
         if (path.Count > 2 && Map.IsPathStraight(path) && organ.CanSpore())
         {
             organ.Spore(path[path.Count - 3]);
@@ -255,6 +255,8 @@ public class Organism
         }
         else
         {
+            Console.Error.WriteLine("Waiting due to no available spots");
+
             Wait();
         }
     }
