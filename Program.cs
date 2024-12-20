@@ -378,25 +378,20 @@ public class DefensiveBehaviour : BaseBehaviour
 
 public class Organism
 {
+    private IBehaviour behaviour;
+
     public int id;
     public Organ root;
     public List<Organ> organs;
     public List<Organ> harvesters;
     public Ownership owner;
     public bool isUsed;
-
     public Map map;
-    public ProteinReserve proteins;   
-
+    public ProteinReserve proteins;
     public BehaviourType behaviourType
     {
-        set 
-        {
-            behaviour = GetBehaviour(value);
-        }
+        set => behaviour = GetBehaviour(value);
     }
-
-    private IBehaviour behaviour;
 
     public enum BehaviourType
     {
