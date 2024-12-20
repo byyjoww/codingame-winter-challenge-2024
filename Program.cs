@@ -27,7 +27,9 @@ class Player
             // New round
             ts = DateTime.UtcNow;
             var proteins = new List<Protein>();
-            var organisms = map.Organisms;
+            var walls = new List<Organ>();
+            var organisms = map.Organisms;     
+            var newOrganisms = new List<Organism>();       
 
             int entityCount = int.Parse(Console.ReadLine());
             for (int i = 0; i < entityCount; i++)
@@ -64,6 +66,12 @@ class Player
                         direction = organDir,
                     };
 
+                    if (ot == Organ.OrganType.Wall)
+                    {
+                        walls.Add(organ);
+                        continue;
+                    }
+
                     // New organism was created last turn
                     var organism = organisms.FirstOrDefault(x => x.id == organRootId);
                     if (organism == null)
@@ -91,7 +99,8 @@ class Player
                         };
 
                         organisms.Add(organism);
-                        Console.Error.WriteLine($"Created new organism {organRootId} with behaviour {behaviour}");
+                        newOrganisms.Add(organism);
+                        Console.Error.WriteLine($"Created new organism {organRootId} for owner {organismOwner} with behaviour {behaviour}");
                     }
 
                     organism.AddOrgan(organ);
@@ -100,9 +109,15 @@ class Player
 
             // Update map state once all entities have been created
             map.SetProteins(proteins);
+            map.SetWalls(walls);
             map.SetOrganisms(organisms);
             map.Build();
             // map.PrintState(); 
+
+            foreach (var o in newOrganisms)
+            {
+                o.Init();
+            }
 
             // Update player proteins
             inputs = Console.ReadLine().Split(' ');
@@ -145,6 +160,7 @@ class Player
 
 public interface IBehaviour
 {
+    void Init();
     void Plan();
     void Act();
 }
@@ -161,6 +177,11 @@ public abstract class BaseBehaviour : IBehaviour
         this.organism = organism;
         this.map = map;
         this.proteins = proteins;
+    }
+
+    public virtual void Init()
+    {
+
     }
 
     public abstract void Plan();
@@ -255,11 +276,13 @@ public class HarvestBehaviour : BaseBehaviour
 
     public HarvestBehaviour(Organism organism, Map map, ProteinReserve proteins) : base(organism, map, proteins)
     {
-        var unharvestedProteins = map.Proteins
-            .Where(x => !x.isPlayerHarvested)
-            .ToArray();
+         
+    }
 
-        var pathsToProteins = unharvestedProteins
+    public override void Init()
+    {
+        var pathsToProteins = map.Proteins
+            .Where(x => !x.isPlayerHarvested)
             .Select(x => (protein: x, path: map.CalculatePathHeuristic(organism.root.position, x.position)))
             .Where(x => x.path != null)                
             .OrderBy(x => x.path.Count)
@@ -293,6 +316,8 @@ public class HarvestBehaviour : BaseBehaviour
             .OrderBy(x => x.Value)
             .Select(x => x.Key)
             .ToList();
+
+        Console.Error.WriteLine($"Selected proteins [{string.Join(", ", harvestTargets.Select(x => x.ToString()))}] for harvest");
     }
 
     public override void Plan()
@@ -511,6 +536,7 @@ public class Organism
 
     public enum BehaviourType
     {
+        None,
         Harvest,
         Defensive,
     }
@@ -536,17 +562,23 @@ public class Organism
     {
         switch (behaviour)
         {
-            case BehaviourType.Harvest:
-            default:
+            case BehaviourType.Harvest:            
                 return new HarvestBehaviour(this, map, proteins);
             case BehaviourType.Defensive:
                 return new DefensiveBehaviour(this, map, proteins);
+                default:
+            return null;
         }
     }
 
     public void Use()
     {
         isUsed = true;
+    }
+
+    public void Init()
+    {
+        behaviour?.Init();
     }
 
     public void Plan()
@@ -691,6 +723,7 @@ public class Map
     private int width; // columns
     private int height; // rows
     private List<Protein> proteins;
+    private List<Organ> walls;
     private List<Organism> organisms;    
     private List<Organism> playerOrganisms;
     private List<Organism> opponentOrganisms;
@@ -732,6 +765,11 @@ public class Map
         this.organisms = organisms;
     }
 
+    public void SetWalls(List<Organ> walls)
+    {
+        this.walls = walls;
+    }
+
     public bool HasOpponentOrgan(Vector2 pos)
     {
         return OpponentOrgans.Any(x => x.position == pos);
@@ -762,6 +800,7 @@ public class Map
     {
         organs = organisms
             .SelectMany(x => x.organs)
+            .Concat(walls)
             .ToList();
 
         playerOrganisms = organisms
