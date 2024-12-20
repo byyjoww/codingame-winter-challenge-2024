@@ -124,7 +124,11 @@ class Player
 
                     if (pathsToOpponent.Length > 0)
                     {
-                        bool hasValidPathToOpponentRoot = pathToOpponentRoot != null && pathToOpponentRoot.Count >= 2 && map.HasOpponentOrgan(pathToOpponentRoot[1]);
+                        bool hasValidPathToOpponentRoot = pathToOpponentRoot != null 
+                            && pathToOpponentRoot.Count >= 2
+                            && !map.HasOpponentOrgan(pathToOpponentRoot[0])
+                            && map.HasOpponentOrgan(pathToOpponentRoot[1]);
+
                         (Organ oppOrgan, List<Vector2> path) closestOpponentOrganToCurrentOrgan = hasValidPathToOpponentRoot
                             ? (map.OpponentRoot.Value, pathToOpponentRoot)
                             : pathsToOpponent.FirstOrDefault();
@@ -144,35 +148,28 @@ class Player
                     List<Vector2> closestPath = closestProteinToAnyOrgan.Value.path;
                     Vector2 next = closestPath.FirstOrDefault();
                     Console.Error.WriteLine($"Closest protein is {closestProtein.type} at {closestProtein.position} | path: [{string.Join(", ", closestPath.Select(x => x).ToArray())}]");
-                    
-                    if (closestPath.Count > 2
-                        && Map.IsPathStraight(closestPath) 
-                        && closestOrgan.type == Organ.OrganType.Sporer 
-                        && playerProteins.a > 0 
-                        && playerProteins.b > 0 
-                        && playerProteins.c > 0 
-                        && playerProteins.d > 0)
-                    {                    
-                        closestOrgan.Spore(closestPath.LastOrDefault());                  
+
+                    if (closestPath.Count > 2 && Map.IsPathStraight(closestPath) && closestOrgan.CanSpore())
+                    {
+                        closestOrgan.Spore(closestPath.LastOrDefault());
                     }
-                    else if (closestPath.Count > 2 
+                    else if (closestPath.Count > 2
                         && Map.IsPathStraight(closestPath)
-                        && playerProteins.a > 0 
-                        && playerProteins.b > 1 
+                        && playerProteins.a > 0
+                        && playerProteins.b > 1
                         && playerProteins.c > 0 
                         && playerProteins.d > 1)
                     {
+                        // must be able to grow a sporer and then spore next turn
                         Vector2 dir = closestPath[1] - next;
                         closestOrgan.GrowSporer(next, Map.GetDirectionKey(dir));
                     }
-                    else if (closestPath.Count == 2 
-                        && playerProteins.c > 0 
-                        && playerProteins.d > 0)
+                    else if (closestPath.Count == 2 && closestOrgan.CanGrow(Organ.OrganType.Harvester))
                     {
                         Vector2 dir = closestPath[1] - next;
                         closestOrgan.GrowHarvester(next, Map.GetDirectionKey(dir));
                     }
-                    else if (playerProteins.a > 0)
+                    else if (closestOrgan.CanGrow(Organ.OrganType.Basic))
                     {
                         closestOrgan.GrowBasic(next);
                     }
@@ -192,14 +189,12 @@ class Player
                     Console.Error.WriteLine($"Closest opponent organ is {closestOpponentOrgan.type} at {closestOpponentOrgan.position} | path: [{string.Join(", ", closestPath.Select(x => x).ToArray())}]");
                     
                     bool willHaveAdjacentOpponentOrgan = closestPath.Count >= 2 && map.HasOpponentOrgan(closestPath[1]);
-                    if (willHaveAdjacentOpponentOrgan 
-                        && playerProteins.b > 0 
-                        && playerProteins.c > 0)
+                    if (willHaveAdjacentOpponentOrgan && closestOrgan.CanGrow(Organ.OrganType.Tentacle))
                     {
                         Vector2 dir = closestPath[1] - next;        
                         closestOrgan.GrowTentacle(next, Map.GetDirectionKey(dir));
                     }
-                    else if (playerProteins.a > 0)
+                    else if (closestOrgan.CanGrow(Organ.OrganType.Basic))
                     {
                         closestOrgan.GrowBasic(next);
                     }
@@ -623,6 +618,32 @@ public struct Organ : IEntity
         Sporer
     }
 
+    public bool CanGrow(OrganType organType)
+    {
+        switch(organType)
+        {
+            case OrganType.Basic:
+                return playerProteins.a >= 1;
+            case OrganType.Harvester:
+                return playerProteins.c >= 1 && playerProteins.d >= 1;
+            case OrganType.Tentacle:
+                return playerProteins.b >= 1 && playerProteins.c >= 1;
+            case OrganType.Sporer:
+                return playerProteins.b >= 1 && playerProteins.d >= 1;
+        }
+
+        return false;
+    }
+
+    public bool CanSpore()
+    {
+        return type == OrganType.Sporer
+            && playerProteins.a > 0
+            && playerProteins.b > 0
+            && playerProteins.c > 0
+            && playerProteins.d > 0;
+    }
+
     public void GrowBasic(Vector2 destination)
     {
         Grow(OrganType.Basic, destination, "N");
@@ -652,19 +673,19 @@ public struct Organ : IEntity
 
     public void GrowAny(Vector2 destination)
     {
-        if (playerProteins.a > 0)
+        if (CanGrow(OrganType.Basic))
         {
             GrowBasic(destination);
         }
-        else if (playerProteins.c > 0 && playerProteins.d > 0)
+        else if (CanGrow(OrganType.Harvester))
         {
             GrowHarvester(destination, "N");
         }
-        else if (playerProteins.b > 0 && playerProteins.c > 0)
+        else if (CanGrow(OrganType.Tentacle))
         {
             GrowTentacle(destination, "N");
         }
-        else if (playerProteins.b > 0 && playerProteins.d > 0)
+        else if (CanGrow(OrganType.Sporer))
         {
             GrowSporer(destination, "N");
         }
@@ -676,6 +697,12 @@ public struct Organ : IEntity
 
     private void Grow(OrganType growthType, Vector2 destination, string direction)
     {
+        if (!CanGrow(growthType))
+        {
+            Wait("failed to grow");
+            return;
+        }
+
         Console.Error.WriteLine($"Organ {id} (organism {organismId}) is growing a {growthType} from {position} to {destination} facing {direction}");
         Console.WriteLine($"GROW {id} {destination.X} {destination.Y} {growthType.ToString().ToUpper()} {direction}");
         usedOrganismIds.Add(organismId);
@@ -683,9 +710,9 @@ public struct Organ : IEntity
 
     public void Spore(Vector2 destination)
     {
-        if (type != OrganType.Sporer)
+        if (!CanSpore())
         {
-            Wait("failed to spore: not a sporer");
+            Wait("failed to spore");
             return;
         }
 
