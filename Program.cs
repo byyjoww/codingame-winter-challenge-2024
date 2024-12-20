@@ -101,7 +101,7 @@ class Player
 
             // Update map state once all entities have been created
             map.Refresh();
-            map.PrintState();            
+            // map.PrintState();            
 
             // Process player actions
             int requiredActionsCount = int.Parse(Console.ReadLine());
@@ -149,22 +149,35 @@ public class Organism
 
     public void Act()
     {
-        var unharvestedProteins = map.Proteins
-            .Where(x => !x.isPlayerHarvested)
-            .ToArray();
+        // first priority is to defend ourselves
+        bool foundClosestOrgan = TryFindClosestOpponentOrgan(out var closestOrgan);
+        if (map.OpponentOrgans.Count > 0 && foundClosestOrgan && closestOrgan.Value.path.Count == 3)
+        {
+            Console.Error.WriteLine("[Decision] Defense");
+            MoveToOrgan(closestOrgan.Value.organ, closestOrgan.Value.oppOrgan, closestOrgan.Value.path);
+            return;
+        }
 
-        if (unharvestedProteins.Length > 0 && TryFindClosestUnharvestedProtein(out var protein))
+        // second priority is to collect proteins
+        if (map.Proteins.Where(x => !x.isPlayerHarvested).ToArray().Length > 0 && TryFindClosestUnharvestedProtein(proteins.GetPriority(0), out var protein))
         {
+            Console.Error.WriteLine("[Decision] Harvest");
             HarvestProtein(protein.Value.protein, protein.Value.organ, protein.Value.path);
+            return;
         }
-        else if (map.OpponentOrgans.Count > 0 && (TryFindClosestOpponentRoot(out var organ) || TryFindClosestOpponentOrgan(out organ)))
+
+        // third priority is to disrupt the opponent
+        if (map.OpponentOrgans.Count > 0 && (TryFindClosestOpponentRoot(out var organ) || foundClosestOrgan))
         {
+            Console.Error.WriteLine("[Decision] Disrupt");
+            organ ??= closestOrgan;
             MoveToOrgan(organ.Value.organ, organ.Value.oppOrgan, organ.Value.path);
+            return;
         }
-        else
-        {
-            Grow();
-        }
+
+        // last priority is to grow in random positions
+        Console.Error.WriteLine("[Decision] Grow");
+        GrowInRandomPosition();
     }
 
     private void HarvestProtein(Protein protein, Organ organ, List<Vector2> path)
@@ -205,7 +218,7 @@ public class Organism
         }
         else
         {
-            Grow();
+            GrowInRandomPosition();
         }
     }
 
@@ -231,11 +244,11 @@ public class Organism
         }
         else
         {
-            Grow();
+            GrowInRandomPosition();
         }
     }
 
-    private void Grow()
+    private void GrowInRandomPosition()
     {
         // No available proteins to harvest or opponent organs to disrupt
         // Continue growing in random spots until game ends/proteins run out
@@ -267,7 +280,7 @@ public class Organism
         Console.WriteLine("WAIT");
     }
 
-    private bool TryFindClosestUnharvestedProtein(out (Organ organ, Protein protein, List<Vector2> path)? target)
+    private bool TryFindClosestUnharvestedProtein(Protein.ProteinType? priority, out (Organ organ, Protein protein, List<Vector2> path)? target)
     {
         target = null;
         foreach (Organ org in organs)
@@ -276,7 +289,11 @@ public class Organism
                 .Select(x => (protein: x, path: map.CalculatePathHeuristic(org.position, x.position)))
                 .Where(x => x.path != null)
                 .Where(x => !x.protein.isPlayerHarvested)
-                .OrderBy(x => x.path.Count)
+                .OrderBy(x => 
+                    priority.HasValue && x.protein.type == priority.Value 
+                        ? 0
+                        : 1)
+                .ThenBy(x => x.path.Count)
                 .ToArray();
 
             if (pathsToProteins.Length > 0)
@@ -858,6 +875,31 @@ public class ProteinReserve
     public int b;
     public int c;
     public int d;
+
+    public Protein.ProteinType[] GetPriorities(int threshold)
+    {
+        var proteinCounts = new Dictionary<Protein.ProteinType, int>
+        {
+            { Protein.ProteinType.A, a },
+            { Protein.ProteinType.B, b },
+            { Protein.ProteinType.C, c },
+            { Protein.ProteinType.D, d }
+        };
+
+        return proteinCounts
+            .Where(x => x.Value < threshold)
+            .OrderBy(x => x.Value)
+            .Select(x => x.Key)
+            .ToArray();
+    }
+
+    public Protein.ProteinType? GetPriority(int threshold)
+    {
+        var priorities = GetPriorities(0);
+        return priorities.Length > 0 
+            ? priorities.First() 
+            : null;
+    }
 
     public void Clear()
     {
