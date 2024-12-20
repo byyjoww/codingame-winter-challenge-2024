@@ -151,9 +151,9 @@ class Player
 
                     if (closestPath.Count > 2 && Map.IsPathStraight(closestPath) && closestOrgan.CanSpore())
                     {
-                        closestOrgan.Spore(closestPath.LastOrDefault());
+                        closestOrgan.Spore(closestPath[closestPath.Count - 3]);
                     }
-                    else if (closestPath.Count > 2
+                    else if (closestPath.Count > 3
                         && Map.IsPathStraight(closestPath)
                         && playerProteins.a > 0
                         && playerProteins.b > 1
