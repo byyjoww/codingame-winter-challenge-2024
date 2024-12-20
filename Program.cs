@@ -19,17 +19,15 @@ class Player
 
         Map map = new Map(width, height);
         ProteinReserve playerProteins = new ProteinReserve();
-        ProteinReserve opponentProteins = new ProteinReserve();      
-        var organismConfigs = new Dictionary<int, Organism.BehaviourType>();  
+        ProteinReserve opponentProteins = new ProteinReserve();            
         var sporeQueue = new Queue<Organism.BehaviourType>();
 
         while (true)
         {
-            // New round, reset all data
+            // New round
             ts = DateTime.UtcNow;
-            map.Clear();            
-            playerProteins.Clear();
-            opponentProteins.Clear();
+            var proteins = new List<Protein>();
+            var organisms = map.Organisms;
 
             int entityCount = int.Parse(Console.ReadLine());
             for (int i = 0; i < entityCount; i++)
@@ -45,9 +43,10 @@ class Player
                 int organRootId = int.Parse(inputs[7]);
 
                 if (Enum.TryParse(type, true, out Protein.ProteinType pt))
-                {
-                    map.AddProtein(new Protein
+                {                    
+                    proteins.Add(new Protein
                     {
+                        id = $"protein_{pt.ToString().ToLower()}_{x}_{y}",
                         type = pt,
                         position = new Vector2(x, y),
                         harvesters = new List<Organ>(),
@@ -65,15 +64,11 @@ class Player
                         direction = organDir,
                     };
 
-                    if (!map.Organisms.Any(x => x.id == organRootId))
+                    // New organism was created last turn
+                    if (!organisms.Any(x => x.id == organRootId))
                     {
-                        Ownership organismOwner = (Ownership)owner;
-                        var behaviourType = organismConfigs.TryGetValue(organRootId, out Organism.BehaviourType bt) 
-                            ? bt 
-                            : sporeQueue.Dequeue();
-
-                        organismConfigs.TryAdd(organRootId, behaviourType);
-                        map.AddOrganism(new Organism
+                        Ownership organismOwner = (Ownership)owner;                        
+                        organisms.Add(new Organism
                         {
                             id = organRootId,
                             root = default,
@@ -85,15 +80,23 @@ class Player
                             proteins = organismOwner == Ownership.Player
                                 ? playerProteins
                                 : opponentProteins,
-                            Behaviour = behaviourType,
+                            Behaviour = organismOwner == Ownership.Player 
+                                ? sporeQueue.Dequeue()
+                                : default,
                         });
                     }
 
-                    map.Organisms
+                    organisms
                         .First(x => x.id == organRootId)
                         .AddOrgan(organ);
                 }
             }
+
+            // Update map state once all entities have been created
+            map.SetProteins(proteins);
+            map.SetOrganisms(organisms);
+            map.Build();
+            // map.PrintState(); 
 
             // Update player proteins
             inputs = Console.ReadLine().Split(' ');
@@ -109,11 +112,7 @@ class Player
             opponentProteins.c = int.Parse(inputs[2]);
             opponentProteins.d = int.Parse(inputs[3]);
 
-            Console.Error.WriteLine("Starting turn");
-
-            // Update map state once all entities have been created
-            map.Refresh();
-            // map.PrintState();            
+            Console.Error.WriteLine("Starting turn");                       
 
             // Process player actions
             int requiredActionsCount = int.Parse(Console.ReadLine());
@@ -672,14 +671,14 @@ public class Map
         this.organisms = new List<Organism>();
     }
 
-    public void AddProtein(Protein protein)
+    public void SetProteins(List<Protein> proteins)
     {
-        proteins.Add(protein);
+        this.proteins = proteins;
     }
 
-    public void AddOrganism(Organism organism)
+    public void SetOrganisms(List<Organism> organisms)
     {
-        organisms.Add(organism);
+        this.organisms = organisms;
     }
 
     public bool HasOpponentOrgan(Vector2 pos)
@@ -708,7 +707,7 @@ public class Map
         return spots.Length > 0;
     }
 
-    public void Refresh()
+    public void Build()
     {
         organs = organisms
             .SelectMany(x => x.organs)
@@ -748,12 +747,6 @@ public class Map
                 proteins[index].harvesters.Add(harvester.organ);
             }
         }
-    }
-
-    public void Clear()
-    {
-        proteins.Clear();
-        organisms.Clear();
     }
 
     public void PrintState()
@@ -996,6 +989,7 @@ public interface IEntity
 
 public struct Protein : IEntity
 {
+    public string id;
     public ProteinType type;
     public Vector2 position;
     public List<Organ> harvesters;
@@ -1069,13 +1063,5 @@ public class ProteinReserve
         return priorities.Length > 0 
             ? priorities.First() 
             : null;
-    }
-
-    public void Clear()
-    {
-        a = 0;
-        b = 0;
-        c = 0;
-        d = 0;
     }
 }
