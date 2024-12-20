@@ -12,19 +12,19 @@ class Player
     {
         string[] inputs;
         inputs = Console.ReadLine().Split(' ');
-
         int width = int.Parse(inputs[0]);
         int height = int.Parse(inputs[1]);
+
         Map map = new Map(width, height);
         ProteinReserve playerProteins = new ProteinReserve();
-        ProteinReserve opponentProteins = new ProteinReserve();
-        HashSet<int> usedOrganismIds = new HashSet<int>();
+        ProteinReserve opponentProteins = new ProteinReserve();        
 
-        // Game Loop
         while (true)
         {
-            map.Clear();
-            usedOrganismIds.Clear();
+            // New round, reset all data
+            map.Clear();            
+            playerProteins.Clear();
+            opponentProteins.Clear();
 
             int entityCount = int.Parse(Console.ReadLine());
             for (int i = 0; i < entityCount; i++)
@@ -51,163 +51,163 @@ class Player
 
                 if (Enum.TryParse(type, true, out Organ.OrganType ot))
                 {
-                    map.AddOrgan(new Organ
+                    Organ organ = new Organ
                     {
                         id = organId,
-                        organismId = organRootId,
+                        organism = null, // is set by organism.AddOrgan()
                         type = ot,
-                        owner = (Ownership)owner,
                         position = new Vector2(x, y),
                         direction = organDir,
-                        usedOrganismIds = usedOrganismIds,
-                        playerProteins = playerProteins,
-                    });
+                    };
+
+                    if (!map.Organisms.Any(x => x.id == organRootId))
+                    {         
+                        Ownership organismOwner = (Ownership)owner;               
+                        map.AddOrganism(new Organism
+                        {
+                            id = organRootId,
+                            root = default,
+                            organs = new List<Organ>(),
+                            owner = organismOwner,
+                            isUsed = false,
+                            map = map,
+                            proteins = organismOwner == Ownership.Player
+                                ? playerProteins
+                                : opponentProteins,
+                        });
+                    }
+
+                    map.Organisms
+                        .First(x => x.id == organRootId)
+                        .AddOrgan(organ);
                 }
             }
 
-            map.Refresh();
-
-            // your protein stock
+            // Update player proteins
             inputs = Console.ReadLine().Split(' ');
             playerProteins.a = int.Parse(inputs[0]);
             playerProteins.b = int.Parse(inputs[1]);
             playerProteins.c = int.Parse(inputs[2]);
             playerProteins.d = int.Parse(inputs[3]);
 
-            // opponent's protein stock
+            // Update opponent proteins
             inputs = Console.ReadLine().Split(' ');
             opponentProteins.a = int.Parse(inputs[0]);
             opponentProteins.b = int.Parse(inputs[1]);
             opponentProteins.c = int.Parse(inputs[2]);
             opponentProteins.d = int.Parse(inputs[3]);
 
-            int requiredActionsCount = int.Parse(Console.ReadLine()); // your number of organisms, output an action for each one in any order
+            // Update map state once all entities have been created
+            map.Refresh();
+            map.PrintState();            
+
+            // Process player actions
+            int requiredActionsCount = int.Parse(Console.ReadLine());
             for (int i = 0; i < requiredActionsCount; i++)
             {
-                // PRINT STATE
-                map.PrintState();
+                // The organism that will perform this action
+                // TODO: sort priority for organisms that need to go first
+                Organism organism = map.PlayerOrganisms[i];
+                organism.Act();                
+            }
+        }
+    }
+}
 
-                (Organ organ, Protein protein, List<Vector2> path)? closestProteinToAnyOrgan = null;
-                (Organ organ, Organ oppOrgan, List<Vector2> path)? closestOpponentOrganToAnyOrgan = null;
+public class Organism
+{
+    public int id;
+    public Organ root;
+    public List<Organ> organs;
+    public Ownership owner;
+    public bool isUsed;
 
-                var availablePlayerOrgans = map.PlayerOrgans
-                    .Where(x => !usedOrganismIds.Contains(x.organismId))
+    public Map map;
+    public ProteinReserve proteins;    
+
+    public void AddOrgan(Organ organ)
+    {
+        organ.organism = this;
+        organs.Add(organ);
+
+        if (organ.type == Organ.OrganType.Root)
+        {
+            this.root = organ;
+        }
+    }
+
+    public void Use()
+    {
+        isUsed = true;
+    }
+
+    public void Act()
+    {
+        var availableUnharvestedProteins = map.Proteins
+            .Where(x => !x.isPlayerHarvested)
+            .ToArray();
+
+        if (availableUnharvestedProteins.Length > 0)
+        {
+            // There are proteins available for harvesting
+            // TODO: sort available proteins by priority
+
+            (Organ organ, Protein protein, List<Vector2> path)? closestProteinToAnyOrgan = null;
+
+            foreach (Organ org in organs)
+            {
+                var pathsToProteins = map.Proteins
+                    .Select(x => (protein: x, path: map.CalculatePathHeuristic(org.position, x.position)))
+                    .Where(x => x.path != null)
+                    .OrderBy(x => x.path.Count)
                     .ToArray();
 
-                foreach (Organ org in availablePlayerOrgans)
+                if (pathsToProteins.Length > 0)
                 {
-                    var pathsToProteins = map.Proteins
-                        .Select(x => (protein: x, path: map.CalculatePathHeuristic(org.position, x.position)))
-                        .Where(x => x.path != null)
-                        .OrderBy(x => x.path.Count)
-                        .ToArray();
-
-                    var pathsToOpponent = map.OpponentOrgans
-                        .Select(x => (organ: x, path: map.CalculatePath(org.position, x.position)))
-                        .Where(x => x.path != null && x.path.Count > 1)
-                        .OrderBy(x => x.path.Count)
-                        .ToArray();
-
-                    var pathToOpponentRoot = map.OpponentRoot.HasValue
-                        ? map.CalculatePath(org.position, map.OpponentRoot.Value.position, true)
-                        : null;
-
-                    if (pathsToProteins.Length > 0)
+                    (Protein protein, List<Vector2> path) closestProteinToCurrentOrgan = pathsToProteins.FirstOrDefault();
+                    bool isClosest = !closestProteinToAnyOrgan.HasValue || closestProteinToCurrentOrgan.path.Count < closestProteinToAnyOrgan.Value.path.Count;
+                    if (isClosest && !closestProteinToCurrentOrgan.protein.isPlayerHarvested)
                     {
-                        (Protein protein, List<Vector2> path) closestProteinToCurrentOrgan = pathsToProteins.FirstOrDefault();
-                        bool isClosest = !closestProteinToAnyOrgan.HasValue || closestProteinToCurrentOrgan.path.Count < closestProteinToAnyOrgan.Value.path.Count;
-                        if (isClosest && !closestProteinToCurrentOrgan.protein.isPlayerHarvested)
-                        {
-                            closestProteinToAnyOrgan = (org, closestProteinToCurrentOrgan.protein, closestProteinToCurrentOrgan.path);
-                        }
-                    }
-
-                    if (pathsToOpponent.Length > 0)
-                    {
-                        bool hasValidPathToOpponentRoot = pathToOpponentRoot != null 
-                            && pathToOpponentRoot.Count >= 2
-                            && !map.HasOpponentOrgan(pathToOpponentRoot[0])
-                            && map.HasOpponentOrgan(pathToOpponentRoot[1]);
-
-                        (Organ oppOrgan, List<Vector2> path) closestOpponentOrganToCurrentOrgan = hasValidPathToOpponentRoot
-                            ? (map.OpponentRoot.Value, pathToOpponentRoot)
-                            : pathsToOpponent.FirstOrDefault();
-                        
-                        bool isClosest = !closestOpponentOrganToAnyOrgan.HasValue || closestOpponentOrganToCurrentOrgan.path.Count < closestOpponentOrganToAnyOrgan.Value.path.Count;
-                        if (isClosest)
-                        {
-                            closestOpponentOrganToAnyOrgan = (org, closestOpponentOrganToCurrentOrgan.oppOrgan, closestOpponentOrganToCurrentOrgan.path);
-                        }
+                        closestProteinToAnyOrgan = (org, closestProteinToCurrentOrgan.protein, closestProteinToCurrentOrgan.path);
                     }
                 }
+            }
 
-                if (closestProteinToAnyOrgan.HasValue)
+            if (closestProteinToAnyOrgan.HasValue)
+            {
+                Organ closestOrgan = closestProteinToAnyOrgan.Value.organ;
+                Protein closestProtein = closestProteinToAnyOrgan.Value.protein;
+                List<Vector2> closestPath = closestProteinToAnyOrgan.Value.path;
+                Vector2 next = closestPath.FirstOrDefault();
+                Console.Error.WriteLine($"Closest protein is {closestProtein.type} at {closestProtein.position} | path: [{string.Join(", ", closestPath.Select(x => x).ToArray())}]");
+
+                if (closestPath.Count > 2 && Map.IsPathStraight(closestPath) && closestOrgan.CanSpore())
                 {
-                    Organ closestOrgan = closestProteinToAnyOrgan.Value.organ;
-                    Protein closestProtein = closestProteinToAnyOrgan.Value.protein;
-                    List<Vector2> closestPath = closestProteinToAnyOrgan.Value.path;
-                    Vector2 next = closestPath.FirstOrDefault();
-                    Console.Error.WriteLine($"Closest protein is {closestProtein.type} at {closestProtein.position} | path: [{string.Join(", ", closestPath.Select(x => x).ToArray())}]");
-
-                    if (closestPath.Count > 2 && Map.IsPathStraight(closestPath) && closestOrgan.CanSpore())
-                    {
-                        closestOrgan.Spore(closestPath[closestPath.Count - 3]);
-                    }
-                    else if (closestPath.Count > 3
-                        && Map.IsPathStraight(closestPath)
-                        && playerProteins.a > 0
-                        && playerProteins.b > 1
-                        && playerProteins.c > 0 
-                        && playerProteins.d > 1)
-                    {
-                        // must be able to grow a sporer and then spore next turn
-                        Vector2 dir = closestPath[1] - next;
-                        closestOrgan.GrowSporer(next, Map.GetDirectionKey(dir));
-                    }
-                    else if (closestPath.Count == 2 && closestOrgan.CanGrow(Organ.OrganType.Harvester))
-                    {
-                        Vector2 dir = closestPath[1] - next;
-                        closestOrgan.GrowHarvester(next, Map.GetDirectionKey(dir));
-                    }
-                    else if (closestOrgan.CanGrow(Organ.OrganType.Basic))
-                    {
-                        closestOrgan.GrowBasic(next);
-                    }
-                    else
-                    {
-                        Console.Error.WriteLine($"Organism is waiting: insufficient proteins for growth");
-                        Console.WriteLine("WAIT");
-                    }
+                    closestOrgan.Spore(closestPath[closestPath.Count - 3]);
                 }
-                else if (closestOpponentOrganToAnyOrgan.HasValue)
+                else if (closestPath.Count > 4
+                    && Map.IsPathStraight(closestPath)
+                    && proteins.a > 0
+                    && proteins.b > 1
+                    && proteins.c > 0
+                    && proteins.d > 1)
                 {
-                    Organ closestOrgan = closestOpponentOrganToAnyOrgan.Value.organ;
-                    Organ closestOpponentOrgan = closestOpponentOrganToAnyOrgan.Value.oppOrgan;
-                    List<Vector2> closestPath = closestOpponentOrganToAnyOrgan.Value.path;
-                    Vector2 next = closestPath.FirstOrDefault();
-
-                    Console.Error.WriteLine($"Closest opponent organ is {closestOpponentOrgan.type} at {closestOpponentOrgan.position} | path: [{string.Join(", ", closestPath.Select(x => x).ToArray())}]");
-                    
-                    bool willHaveAdjacentOpponentOrgan = closestPath.Count >= 2 && map.HasOpponentOrgan(closestPath[1]);
-                    if (willHaveAdjacentOpponentOrgan && closestOrgan.CanGrow(Organ.OrganType.Tentacle))
-                    {
-                        Vector2 dir = closestPath[1] - next;        
-                        closestOrgan.GrowTentacle(next, Map.GetDirectionKey(dir));
-                    }
-                    else if (closestOrgan.CanGrow(Organ.OrganType.Basic))
-                    {
-                        closestOrgan.GrowBasic(next);
-                    }
-                    else
-                    {
-                        closestOrgan.GrowAny(next);
-                        //Console.Error.WriteLine($"Organism is waiting: insufficient proteins for growth");
-                        //Console.WriteLine("WAIT");
-                    }
+                    // must be able to grow a sporer and then spore next turn
+                    Vector2 dir = closestPath[1] - next;
+                    closestOrgan.GrowSporer(next, Map.GetDirectionKey(dir));
+                }
+                else if (closestPath.Count == 2 && closestOrgan.CanGrow(Organ.OrganType.Harvester))
+                {
+                    Vector2 dir = closestPath[1] - next;
+                    closestOrgan.GrowHarvester(next, Map.GetDirectionKey(dir));
+                }
+                else if (closestOrgan.CanGrow(Organ.OrganType.Basic))
+                {
+                    closestOrgan.GrowBasic(next);
                 }
                 else
                 {
-                    var availableSpots = availablePlayerOrgans
+                    var availableSpots = organs
                         .Select(x => (organ: x, hasSpot: map.HasAdjacentFreeSpot(x.position, out Vector2[] spots), spot: spots.FirstOrDefault()))
                         .Where(x => x.hasSpot)
                         .ToArray();
@@ -225,6 +225,105 @@ class Player
                 }
             }
         }
+        else if (map.OpponentOrgans.Count > 0)
+        {
+            // There are opponent organs available for disruption
+            // TODO: sort available opponent organs by priority
+
+            (Organ organ, Organ oppOrgan, List<Vector2> path)? closestOpponentOrganToAnyOrgan = null;
+
+            foreach (Organ org in organs)
+            {
+                var pathsToOpponent = map.OpponentOrgans
+                    .Select(x => (organ: x, path: map.CalculatePath(org.position, x.position)))
+                    .Where(x => x.path != null && x.path.Count > 1)
+                    .OrderBy(x => x.path.Count)
+                    .ToArray();
+
+                var firstOpponentRoot = map.OpponentOrganisms.FirstOrDefault().root;
+                var pathToOpponentRoot = map.OpponentOrganisms.Count > 0
+                    ? map.CalculatePath(org.position, firstOpponentRoot.position, true)
+                    : null;
+
+                if (pathsToOpponent.Length > 0)
+                {
+                    bool hasValidPathToOpponentRoot = pathToOpponentRoot != null
+                        && pathToOpponentRoot.Count >= 2
+                        && !map.HasOpponentOrgan(pathToOpponentRoot[0])
+                        && map.HasOpponentOrgan(pathToOpponentRoot[1]);
+
+                    (Organ oppOrgan, List<Vector2> path) closestOpponentOrganToCurrentOrgan = hasValidPathToOpponentRoot
+                        ? (firstOpponentRoot, pathToOpponentRoot)
+                        : pathsToOpponent.FirstOrDefault();
+                    
+                    bool isClosest = !closestOpponentOrganToAnyOrgan.HasValue || closestOpponentOrganToCurrentOrgan.path.Count < closestOpponentOrganToAnyOrgan.Value.path.Count;
+                    if (isClosest)
+                    {
+                        closestOpponentOrganToAnyOrgan = (org, closestOpponentOrganToCurrentOrgan.oppOrgan, closestOpponentOrganToCurrentOrgan.path);
+                    }
+                }
+            }
+            
+            if (closestOpponentOrganToAnyOrgan.HasValue)
+            {
+                Organ closestOrgan = closestOpponentOrganToAnyOrgan.Value.organ;
+                Organ closestOpponentOrgan = closestOpponentOrganToAnyOrgan.Value.oppOrgan;
+                List<Vector2> closestPath = closestOpponentOrganToAnyOrgan.Value.path;
+                Vector2 next = closestPath.FirstOrDefault();
+
+                Console.Error.WriteLine($"Closest opponent organ is {closestOpponentOrgan.type} at {closestOpponentOrgan.position} | path: [{string.Join(", ", closestPath.Select(x => x).ToArray())}]");
+                
+                bool willHaveAdjacentOpponentOrgan = closestPath.Count >= 2 && map.HasOpponentOrgan(closestPath[1]);
+                if (willHaveAdjacentOpponentOrgan && closestOrgan.CanGrow(Organ.OrganType.Tentacle))
+                {
+                    Vector2 dir = closestPath[1] - next;        
+                    closestOrgan.GrowTentacle(next, Map.GetDirectionKey(dir));
+                }
+                else if (closestOrgan.CanGrow(Organ.OrganType.Basic))
+                {
+                    closestOrgan.GrowBasic(next);
+                }
+                else
+                {
+                    var availableSpots = organs
+                    .Select(x => (organ: x, hasSpot: map.HasAdjacentFreeSpot(x.position, out Vector2[] spots), spot: spots.FirstOrDefault()))
+                    .Where(x => x.hasSpot)
+                    .ToArray();
+
+                    if (availableSpots.Length > 0)
+                    {
+                        var first = availableSpots.FirstOrDefault();
+                        first.organ.GrowAny(first.spot);
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"Organism is waiting: no proteins or path to opponent organs available");
+                        Console.WriteLine("WAIT");
+                    }
+                }
+            }
+        }
+        else 
+        {
+            // No available proteins to harvest or opponent organs to disrupt
+            // Continue growing in random spots until game ends/proteins run out
+
+            var availableRandomSpots = organs
+                .Select(x => (organ: x, hasSpot: map.HasAdjacentFreeSpot(x.position, out Vector2[] spots), spot: spots.FirstOrDefault()))
+                .Where(x => x.hasSpot)
+                .ToArray();
+
+            if (availableRandomSpots.Length > 0)
+            {
+                var first = availableRandomSpots.FirstOrDefault();
+                first.organ.GrowAny(first.spot);
+            }
+            else
+            {
+                Console.Error.WriteLine($"Organism is waiting: no proteins or path to opponent organs available");
+                Console.WriteLine("WAIT");
+            }
+        }        
     }
 }
 
@@ -240,20 +339,31 @@ public class Map
     private int width; // columns
     private int height; // rows
     private List<Protein> proteins;
-    private List<Organ> organs;
+    private List<Organism> organisms;
 
     public List<Protein> Proteins => proteins;
+    public List<Organism> Organisms => organisms;
 
-    public List<Organ> PlayerOrgans => organs
+    public List<Organ> Organs => organisms
+        .SelectMany(x => x.organs)
+        .ToList();
+
+    public List<Organism> PlayerOrganisms => organisms
         .Where(x => x.owner == Ownership.Player)
         .ToList();
 
-    public List<Organ> OpponentOrgans => organs
+    public List<Organism> OpponentOrganisms => organisms
         .Where(x => x.owner == Ownership.Opponent)
         .ToList();
 
-    public Organ? PlayerRoot => PlayerOrgans.FirstOrDefault(x => x.type == Organ.OrganType.Root);
-    public Organ? OpponentRoot => OpponentOrgans.FirstOrDefault(x => x.type == Organ.OrganType.Root);
+
+    public List<Organ> PlayerOrgans => PlayerOrganisms
+        .SelectMany(x => x.organs)
+        .ToList();
+
+    public List<Organ> OpponentOrgans => OpponentOrganisms
+        .SelectMany(x => x.organs)
+        .ToList();
 
     private static Dictionary<string, Vector2> movementDirections = new Dictionary<string, Vector2>
     {
@@ -268,7 +378,7 @@ public class Map
         this.width = width;
         this.height = height;
         this.proteins = new List<Protein>();
-        this.organs = new List<Organ>();
+        this.organisms = new List<Organism>();
     }
 
     public void AddProtein(Protein protein)
@@ -276,9 +386,9 @@ public class Map
         proteins.Add(protein);
     }
 
-    public void AddOrgan(Organ organ)
+    public void AddOrganism(Organism organism)
     {
-        organs.Add(organ);
+        organisms.Add(organism);
     }
 
     public bool HasOpponentOrgan(Vector2 pos)
@@ -292,7 +402,7 @@ public class Map
             .Select(x => pos + x)
             .ToArray();
 
-        HashSet<Vector2> obstaclePositions = organs
+        HashSet<Vector2> obstaclePositions = Organs
             .Select(x => x.position)
             .Concat(proteins.Select(x => x.position))
             .ToHashSet();
@@ -306,7 +416,7 @@ public class Map
 
     public void Refresh()
     {
-        var harvesters = organs
+        var harvesters = Organs
             .Where(x => x.type == Organ.OrganType.Harvester)
             .Select(x => (organ: x, facing: x.position + movementDirections[x.direction]))
             .ToArray();
@@ -329,7 +439,7 @@ public class Map
     public void Clear()
     {
         proteins.Clear();
-        organs.Clear();
+        organisms.Clear();
     }
 
     public void PrintState()
@@ -366,8 +476,8 @@ public class Map
 
     public List<Vector2> CalculatePath(Vector2 origin, Vector2 destination, bool ignoreOpponentOrgans = false)
     {
-        var organPositions = organs
-            .Where(x => !ignoreOpponentOrgans || x.owner != Ownership.Opponent)
+        var organPositions = Organs
+            .Where(x => !ignoreOpponentOrgans || x.organism.owner != Ownership.Opponent)
             .Select(x => x.position)
             .Except(new Vector2[] { origin, destination });
 
@@ -420,8 +530,8 @@ public class Map
     public List<Vector2> CalculatePathHeuristic(Vector2 origin, Vector2 destination, bool ignoreOpponentOrgans = false)
     {
         // Get the list of obstacles
-        var organPositions = organs
-            .Where(x => !ignoreOpponentOrgans || x.owner == Ownership.Player)
+        var organPositions = Organs
+            .Where(x => !ignoreOpponentOrgans || x.organism.owner == Ownership.Player)
             .Select(x => x.position)
             .Except(new Vector2[] { origin, destination });
 
@@ -577,8 +687,8 @@ public struct Protein : IEntity
     public List<Organ> harvesters;
 
     Vector2 IEntity.Position => position;
-    public bool isPlayerHarvested => harvesters.Any(x => x.owner == Ownership.Player);
-    public bool isOpponentHarvested => harvesters.Any(x => x.owner == Ownership.Opponent);
+    public bool isPlayerHarvested => harvesters.Any(x => x.organism.owner == Ownership.Player);
+    public bool isOpponentHarvested => harvesters.Any(x => x.organism.owner == Ownership.Opponent);
 
     public enum ProteinType
     {
@@ -597,14 +707,10 @@ public struct Protein : IEntity
 public struct Organ : IEntity
 {
     public int id;
-    public int organismId;
+    public Organism organism;
     public OrganType type;
-    public Ownership owner;
     public Vector2 position;
     public string direction;
-
-    public HashSet<int> usedOrganismIds;
-    public ProteinReserve playerProteins;
 
     Vector2 IEntity.Position => position;
 
@@ -623,13 +729,13 @@ public struct Organ : IEntity
         switch(organType)
         {
             case OrganType.Basic:
-                return playerProteins.a >= 1;
+                return organism.proteins.a >= 1;
             case OrganType.Harvester:
-                return playerProteins.c >= 1 && playerProteins.d >= 1;
+                return organism.proteins.c >= 1 && organism.proteins.d >= 1;
             case OrganType.Tentacle:
-                return playerProteins.b >= 1 && playerProteins.c >= 1;
+                return organism.proteins.b >= 1 && organism.proteins.c >= 1;
             case OrganType.Sporer:
-                return playerProteins.b >= 1 && playerProteins.d >= 1;
+                return organism.proteins.b >= 1 && organism.proteins.d >= 1;
         }
 
         return false;
@@ -638,37 +744,37 @@ public struct Organ : IEntity
     public bool CanSpore()
     {
         return type == OrganType.Sporer
-            && playerProteins.a > 0
-            && playerProteins.b > 0
-            && playerProteins.c > 0
-            && playerProteins.d > 0;
+            && organism.proteins.a > 0
+            && organism.proteins.b > 0
+            && organism.proteins.c > 0
+            && organism.proteins.d > 0;
     }
 
     public void GrowBasic(Vector2 destination)
     {
         Grow(OrganType.Basic, destination, "N");
-        playerProteins.a--;
+        organism.proteins.a--;
     }
 
     public void GrowHarvester(Vector2 destination, string direction)
     {
         Grow(OrganType.Harvester, destination, direction);
-        playerProteins.c--;
-        playerProteins.d--;
+        organism.proteins.c--;
+        organism.proteins.d--;
     }
 
     public void GrowTentacle(Vector2 destination, string direction)
     {
         Grow(OrganType.Tentacle, destination, direction);
-        playerProteins.b--;
-        playerProteins.c--;
+        organism.proteins.b--;
+        organism.proteins.c--;
     }
 
     public void GrowSporer(Vector2 destination, string direction)
     {
         Grow(OrganType.Sporer, destination, direction);
-        playerProteins.b--;
-        playerProteins.d--;
+        organism.proteins.b--;
+        organism.proteins.d--;
     }
 
     public void GrowAny(Vector2 destination)
@@ -703,9 +809,9 @@ public struct Organ : IEntity
             return;
         }
 
-        Console.Error.WriteLine($"Organ {id} (organism {organismId}) is growing a {growthType} from {position} to {destination} facing {direction}");
+        Console.Error.WriteLine($"Organ {id} (organism {organism.id}) is growing a {growthType} from {position} to {destination} facing {direction}");
         Console.WriteLine($"GROW {id} {destination.X} {destination.Y} {growthType.ToString().ToUpper()} {direction}");
-        usedOrganismIds.Add(organismId);
+        organism.Use();
     }
 
     public void Spore(Vector2 destination)
@@ -716,14 +822,14 @@ public struct Organ : IEntity
             return;
         }
 
-        Console.Error.WriteLine($"Organ {id} (organism {organismId}) is sporing a root from {position} to {destination}");
+        Console.Error.WriteLine($"Organ {id} (organism {organism.id}) is sporing a root from {position} to {destination}");
         Console.WriteLine($"SPORE {id} {destination.X} {destination.Y}");
-        usedOrganismIds.Add(organismId);
+        organism.Use();
     }
 
     public void Wait(string reason)
     {
-        Console.Error.WriteLine($"Organ {id} (organism {organismId}) is waiting: {reason}");
+        Console.Error.WriteLine($"Organ {id} (organism {organism.id}) is waiting: {reason}");
         Console.WriteLine("WAIT");
     }
 }
@@ -734,4 +840,12 @@ public class ProteinReserve
     public int b;
     public int c;
     public int d;
+
+    public void Clear()
+    {
+        a = 0;
+        b = 0;
+        c = 0;
+        d = 0;
+    }
 }
