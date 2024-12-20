@@ -20,8 +20,8 @@ class Player
         Map map = new Map(width, height);
         ProteinReserve playerProteins = new ProteinReserve();
         ProteinReserve opponentProteins = new ProteinReserve();      
-        Dictionary<int, int> organismConfigs = new Dictionary<int, int>();  
-        Queue<Organism.BehaviourType> sporeQueue = new Queue<Organism.BehaviourType>();
+        var organismConfigs = new Dictionary<int, Organism.BehaviourType>();  
+        var sporeQueue = new Queue<Organism.BehaviourType>();
 
         while (true)
         {
@@ -66,8 +66,13 @@ class Player
                     };
 
                     if (!map.Organisms.Any(x => x.id == organRootId))
-                    {         
+                    {
                         Ownership organismOwner = (Ownership)owner;
+                        var behaviourType = organismConfigs.TryGetValue(organRootId, out Organism.BehaviourType bt) 
+                            ? bt 
+                            : sporeQueue.Dequeue();
+
+                        organismConfigs.TryAdd(organRootId, behaviourType);
                         map.AddOrganism(new Organism
                         {
                             id = organRootId,
@@ -76,10 +81,11 @@ class Player
                             owner = organismOwner,
                             isUsed = false,
                             map = map,
+                            sporeQueue = sporeQueue,
                             proteins = organismOwner == Ownership.Player
                                 ? playerProteins
-                                : opponentProteins,      
-                            behaviourType = Organism.BehaviourType.Harvest,                      
+                                : opponentProteins,
+                            Behaviour = behaviourType,
                         });
                     }
 
@@ -116,9 +122,10 @@ class Player
                 // The organism that will perform this action
                 // TODO: sort priority for organisms that need to go first
                 Organism organism = map.PlayerOrganisms[i];
-                Console.Error.WriteLine($"Organism {organism.id}'s turn");
+                Console.Error.WriteLine($"Organism {organism.id}'s turn ({organism.Behaviour})");
 
-                organism.Act();                
+                organism.Plan();
+                organism.Act();
             }
 
             Console.Error.WriteLine("Finished turn");
@@ -133,51 +140,24 @@ class Player
 
 public interface IBehaviour
 {
+    void Plan();
     void Act();
 }
 
 public abstract class BaseBehaviour : IBehaviour
 {
+    protected Queue<Action> plan = new Queue<Action>();
+
     public Organism organism;
     public Map map;
     public ProteinReserve proteins;
 
-    public abstract void Act();
+    public abstract void Plan();
 
-    protected void HarvestProtein(Protein protein, Organ organ, List<Vector2> path)
+    public virtual void Act()
     {
-        Console.Error.WriteLine($"Harvesting protein {protein.type} at {protein.position} | path: [{string.Join(", ", path.Select(x => x).ToArray())}]");
-
-        Vector2 next = path.FirstOrDefault();
-
-        if (path.Count > 2 && Map.IsPathStraight(path) && organism.CanSpore(organ))
-        {
-            organism.Spore(organ, path[path.Count - 3], new HarvestBehaviour());
-        }
-        else if (path.Count > 4 && Map.IsPathStraight(path) && organism.CanSplit())
-        {            
-            Console.Error.WriteLine("Growing sporer");
-
-            Vector2 dir = path[1] - next;
-            organism.GrowSporer(organ, next, Map.GetDirectionKey(dir));
-        }
-        else if (path.Count == 2 && organism.CanGrow(Organ.OrganType.Harvester))
-        {
-            Console.Error.WriteLine("Growing harvester");
-
-            Vector2 dir = path[1] - next;
-            organism.GrowHarvester(organ, next, Map.GetDirectionKey(dir));
-        }
-        else if (organism.CanGrow(Organ.OrganType.Basic))
-        {
-            Console.Error.WriteLine("Growing basic");
-
-            organism.GrowBasic(organ, next);
-        }
-        else
-        {
-            GrowInRandomPosition();
-        }
+        var action = plan.Dequeue();
+        action?.Invoke();
     }
 
     protected void MoveToOrgan(Organ organ, Organ opponent, List<Vector2> path)
@@ -185,13 +165,13 @@ public abstract class BaseBehaviour : IBehaviour
         Console.Error.WriteLine($"Moving to opponent organ {opponent.type} at {opponent.position} | path: [{string.Join(", ", path.Select(x => x).ToArray())}]");
 
         Vector2 next = path.FirstOrDefault();
-        
+
         bool willHaveAdjacentOpponentOrgan = path.Count >= 2 && map.HasOpponentOrgan(path[1]);
         if (willHaveAdjacentOpponentOrgan && organism.CanGrow(Organ.OrganType.Tentacle))
         {
             Console.Error.WriteLine("Growing tentacle");
 
-            Vector2 dir = path[1] - next;        
+            Vector2 dir = path[1] - next;
             organism.GrowTentacle(organ, next, Map.GetDirectionKey(dir));
         }
         else if (organism.CanGrow(Organ.OrganType.Basic))
@@ -232,6 +212,124 @@ public abstract class BaseBehaviour : IBehaviour
         }
     }
 
+    protected bool TryFindClosestOpponentOrgan(out (Organ organ, Organ oppOrgan, List<Vector2> path)? targetOrgan)
+    {
+        targetOrgan = null;
+        foreach (Organ org in organism.organs)
+        {
+            var pathsToOpponent = map.OpponentOrgans
+                .Select(x => (organ: x, path: map.CalculatePath(org.position, x.position)))
+                .Where(x => x.path != null && x.path.Count > 1)
+                .OrderBy(x => x.path.Count)
+                .ToArray();
+
+            if (pathsToOpponent.Length > 0)
+            {
+                var first = pathsToOpponent.FirstOrDefault();
+                if (!targetOrgan.HasValue || first.path.Count < targetOrgan.Value.path.Count)
+                {
+                    targetOrgan = (org, first.organ, first.path);
+                }
+            }
+        }
+
+        return targetOrgan.HasValue;
+    }
+}
+
+// Responsible for harvesting one of each protein and dividing
+public class HarvestBehaviour : BaseBehaviour
+{
+    private Dictionary<Protein.ProteinType, int> proteinsBeingHarvested = new Dictionary<Protein.ProteinType, int>();
+    private Dictionary<Organ, Dictionary<Protein, int>> organToProteinDistance = new Dictionary<Organ, Dictionary<Protein, int>>();
+
+    public override void Plan()
+    {
+        plan.Clear();
+
+        Console.Error.WriteLine("Evaluating Defense...");
+
+        // first priority is to defend ourselves
+        bool foundClosestOrgan = TryFindClosestOpponentOrgan(out var closestOrgan);
+        if (map.OpponentOrgans.Count > 0 && foundClosestOrgan && closestOrgan.Value.path.Count == 3)
+        {
+            Console.Error.WriteLine("[Decision] Defense");
+            plan.Enqueue(delegate
+            {
+                MoveToOrgan(closestOrgan.Value.organ, closestOrgan.Value.oppOrgan, closestOrgan.Value.path);
+            });
+            return;
+        }
+
+        Console.Error.WriteLine("Evaluating Harvest...");
+
+        // second priority is to harvest enough proteins to split
+        Protein[] unharvestedProteins = map.Proteins
+            .Where(x => !x.isPlayerHarvested)
+            .ToArray();
+
+        Protein[] harvestedProteins = map.Proteins
+            .Where(x => x.harvesters.Any(x => x.organism.id == organism.id))
+            .ToArray();
+
+        if (unharvestedProteins.Length > 0 && TryFindClosestUnharvestedProtein(proteins.GetPriority(0), out var protein))
+        {
+            Console.Error.WriteLine("[Decision] Harvest");
+            plan.Enqueue(delegate
+            {
+                HarvestProtein(protein.Value.protein, protein.Value.organ, protein.Value.path);                
+            });
+            return;
+        }              
+
+        // last priority is to grow in random positions
+        Console.Error.WriteLine("[Decision] Grow");
+        plan.Enqueue(delegate
+        {
+            GrowInRandomPosition();
+        });
+    }
+
+    protected void HarvestProtein(Protein protein, Organ organ, List<Vector2> path)
+    {
+        Console.Error.WriteLine($"Harvesting protein {protein.type} at {protein.position} | path: [{string.Join(", ", path.Select(x => x).ToArray())}]");
+
+        Vector2 next = path.FirstOrDefault();
+
+        if (path.Count > 5 && Map.IsPathStraight(path) && organism.CanSpore(organ))
+        {
+            organism.Spore(organ, path[path.Count - 3], Organism.BehaviourType.Harvest);
+        }
+        else if (path.Count > 7 && Map.IsPathStraight(path) && organism.CanSplit())
+        {
+            Console.Error.WriteLine("Growing sporer");
+
+            Vector2 dir = path[1] - next;
+            organism.GrowSporer(organ, next, Map.GetDirectionKey(dir));
+        }
+        else if (path.Count == 2 && organism.CanGrow(Organ.OrganType.Harvester))
+        {
+            Console.Error.WriteLine("Growing harvester");
+
+            Vector2 dir = path[1] - next;
+            organism.GrowHarvester(organ, next, Map.GetDirectionKey(dir));
+            if (!proteinsBeingHarvested.TryAdd(protein.type, 1))
+            {
+                proteinsBeingHarvested[protein.type]++;
+            }
+        }
+        else if (organism.CanGrow(Organ.OrganType.Basic))
+        {
+            Console.Error.WriteLine("Growing basic");
+
+            organism.GrowBasic(organ, next);
+        }
+        else
+        {
+            GrowInRandomPosition();
+        }
+    }
+
     protected bool TryFindClosestUnharvestedProtein(Protein.ProteinType? priority, out (Organ organ, Protein protein, List<Vector2> path)? target)
     {
         target = null;
@@ -264,6 +362,48 @@ public abstract class BaseBehaviour : IBehaviour
 
         return target.HasValue;
     }
+}
+
+// Responsible for setting up a defensive perimeter
+public class DefensiveBehaviour : BaseBehaviour 
+{
+    public override void Plan()
+    {
+        Console.Error.WriteLine("Evaluating Defense...");
+
+        // first priority is to defend ourselves
+        bool foundClosestOrgan = TryFindClosestOpponentOrgan(out var closestOrgan);
+        if (map.OpponentOrgans.Count > 0 && foundClosestOrgan && closestOrgan.Value.path.Count == 3)
+        {
+            Console.Error.WriteLine("[Decision] Defense");
+            plan.Enqueue(delegate
+            {
+                MoveToOrgan(closestOrgan.Value.organ, closestOrgan.Value.oppOrgan, closestOrgan.Value.path);
+            });
+            return;
+        }
+
+        Console.Error.WriteLine("Evaluating Disruption...");  
+
+        // third priority is to disrupt the opponent
+        if (map.OpponentOrgans.Count > 0 && (TryFindClosestOpponentRoot(out var organ) || foundClosestOrgan))
+        {
+            Console.Error.WriteLine("[Decision] Disrupt");
+            organ ??= closestOrgan;
+            plan.Enqueue(delegate
+            {
+                MoveToOrgan(organ.Value.organ, organ.Value.oppOrgan, organ.Value.path);
+            });
+            return;
+        }
+
+        // last priority is to grow in random positions
+        Console.Error.WriteLine("[Decision] Grow");
+        plan.Enqueue(delegate
+        {
+            GrowInRandomPosition();
+        });
+    }
 
     protected bool TryFindClosestOpponentRoot(out (Organ organ, Organ oppOrgan, List<Vector2> path)? targetOrgan)
     {
@@ -275,110 +415,25 @@ public abstract class BaseBehaviour : IBehaviour
                 .Select(x => (organ: x, path: map.CalculatePath(org.position, x.position)))
                 .Where(x => x.path != null && x.path.Count > 1 && !map.HasOpponentOrgan(x.path[0]) && map.HasOpponentOrgan(x.path[1]))
                 .OrderBy(x => x.path.Count)
-                .ToArray();            
+                .ToArray();
 
             if (pathsToOpponentRoots.Length > 0)
             {
-                var first = pathsToOpponentRoots.FirstOrDefault();      
+                var first = pathsToOpponentRoots.FirstOrDefault();
                 if (!targetOrgan.HasValue || first.path.Count < targetOrgan.Value.path.Count)
                 {
                     targetOrgan = (org, first.organ, first.path);
                 }
-            }            
+            }
         }
 
         return targetOrgan.HasValue;
-    }
-
-    protected bool TryFindClosestOpponentOrgan(out (Organ organ, Organ oppOrgan, List<Vector2> path)? targetOrgan)
-    {
-        targetOrgan = null;
-        foreach (Organ org in organism.organs)
-        {
-            var pathsToOpponent = map.OpponentOrgans
-                .Select(x => (organ: x, path: map.CalculatePath(org.position, x.position)))
-                .Where(x => x.path != null && x.path.Count > 1)
-                .OrderBy(x => x.path.Count)
-                .ToArray();          
-
-            if (pathsToOpponent.Length > 0)
-            {
-                var first = pathsToOpponent.FirstOrDefault();      
-                if (!targetOrgan.HasValue || first.path.Count < targetOrgan.Value.path.Count)
-                {
-                    targetOrgan = (org, first.organ, first.path);
-                }
-            }            
-        }
-
-        return targetOrgan.HasValue;
-    }    
-}
-
-// Responsible for harvesting one of each protein and dividing
-public class HarvestBehaviour : BaseBehaviour
-{
-    public override void Act()
-    {
-        Console.Error.WriteLine("Evaluating Defense...");
-
-        // first priority is to defend ourselves
-        bool foundClosestOrgan = TryFindClosestOpponentOrgan(out var closestOrgan);
-        if (map.OpponentOrgans.Count > 0 && foundClosestOrgan && closestOrgan.Value.path.Count == 3)
-        {
-            Console.Error.WriteLine("[Decision] Defense");
-            MoveToOrgan(closestOrgan.Value.organ, closestOrgan.Value.oppOrgan, closestOrgan.Value.path);
-            return;
-        }
-
-        Console.Error.WriteLine("Evaluating Harvest...");        
-
-        // second priority is to harvest enough proteins to split
-        Protein[] unharvestedProteins = map.Proteins
-            .Where(x => !x.isPlayerHarvested)
-            .ToArray();
-
-        if (unharvestedProteins.Length > 0 && TryFindClosestUnharvestedProtein(proteins.GetPriority(0), out var protein))
-        {
-            Console.Error.WriteLine("[Decision] Harvest");
-            HarvestProtein(protein.Value.protein, protein.Value.organ, protein.Value.path);
-            return;
-        }
-
-        // second priority is to split into a new organism
-        if (organism.CanSplit())
-        {
-
-        }
-
-        Console.Error.WriteLine("Evaluating Disruption...");
-
-        // third priority is to disrupt the opponent
-        if (map.OpponentOrgans.Count > 0 && (TryFindClosestOpponentRoot(out var organ) || foundClosestOrgan))
-        {
-            Console.Error.WriteLine("[Decision] Disrupt");
-            organ ??= closestOrgan;
-            MoveToOrgan(organ.Value.organ, organ.Value.oppOrgan, organ.Value.path);
-            return;
-        }
-
-        // last priority is to grow in random positions
-        Console.Error.WriteLine("[Decision] Grow");
-        GrowInRandomPosition();
-    }    
-}
-
-// Responsible for setting up a defensive perimeter
-public class DefensiveBehaviour : BaseBehaviour 
-{
-    public override void Act()
-    {
-
     }
 }
 
 public class Organism
 {
+    private BehaviourType behaviourType;
     private IBehaviour behaviour;
 
     public int id;
@@ -390,9 +445,14 @@ public class Organism
     public Map map;
     public ProteinReserve proteins;
     public Queue<BehaviourType> sporeQueue;
-    public BehaviourType behaviourType
+    public BehaviourType Behaviour
     {
-        set => behaviour = GetBehaviour(value);
+        get => behaviourType;
+        set
+        {
+            behaviour = GetBehaviour(value);
+            behaviourType = value;
+        }
     }
 
     public enum BehaviourType
@@ -437,6 +497,11 @@ public class Organism
     public void Use()
     {
         isUsed = true;
+    }
+
+    public void Plan()
+    {
+        behaviour.Plan();
     }
 
     public void Act()
