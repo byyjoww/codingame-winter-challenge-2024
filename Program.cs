@@ -224,17 +224,20 @@ public abstract class BaseBehaviour : IBehaviour
         // Continue growing in random spots until game ends/proteins run out
         Console.Error.WriteLine("[Action] Grow");
 
-        var availableRandomSpots = organism.organs
-            .Select(x => (organ: x, hasSpot: map.HasAdjacentFreeSpot(x.position, out Vector2[] spots), spot: spots.FirstOrDefault()))
-            .Where(x => x.hasSpot)
-            .ToArray();
+        (Organ organ, Vector2 spot)? free = null;
+        foreach (var org in organism.organs)
+        {
+            if (map.HasAdjacentFreeSpot(org.position, out Vector2[] spots))
+            {
+                free = (org, spots[0]);
+                break;
+            }            
+        }
 
-        if (availableRandomSpots.Length > 0)
+        if (free.HasValue)
         {
             Console.Error.WriteLine("Growing any");
-
-            var first = availableRandomSpots.FirstOrDefault();
-            organism.GrowAny(first.organ, first.spot);
+            organism.GrowAny(free.Value.organ, free.Value.spot);
         }
         else
         {
@@ -284,15 +287,19 @@ public class HarvestBehaviour : BaseBehaviour
         var pathsToProteins = map.Proteins
             .Where(x => !x.isPlayerHarvested)
             .Select(x => (protein: x, path: map.CalculatePathHeuristic(organism.root.position, x.position)))
-            .Where(x => x.path != null)                
+            .Where(x => x.path != null && x.path.Count > 2)                
             .OrderBy(x => x.path.Count)
             .ToArray();
 
         var proteinsToCollect = new Protein.ProteinType[] 
         {
             Protein.ProteinType.A, 
+            Protein.ProteinType.A, 
+            Protein.ProteinType.B, 
             Protein.ProteinType.B, 
             Protein.ProteinType.C, 
+            Protein.ProteinType.C, 
+            Protein.ProteinType.D,
             Protein.ProteinType.D,
         };
 
@@ -341,15 +348,7 @@ public class HarvestBehaviour : BaseBehaviour
         Console.Error.WriteLine("Evaluating Harvest...");
 
         // second priority is to harvest enough proteins to split
-        Protein[] unharvestedProteins = map.Proteins
-            .Where(x => !x.isPlayerHarvested)
-            .ToArray();
-
-        Protein[] harvestedProteins = map.Proteins
-            .Where(x => x.harvesters.Any(x => x.organism.id == organism.id))
-            .ToArray();
-
-        if (unharvestedProteins.Length > 0 && TryFindClosestUnharvestedProtein(proteins.GetPriority(0), out var protein))
+        if (harvestTargets.Count > 0 && TryFindClosestUnharvestedProtein(proteins.GetPriority(0), out var protein))
         {
             Console.Error.WriteLine("[Decision] Harvest");
             plan.Enqueue(delegate
@@ -386,7 +385,7 @@ public class HarvestBehaviour : BaseBehaviour
         }
         else if (path.Count == 2 && organism.CanGrow(Organ.OrganType.Harvester))
         {
-            Console.Error.WriteLine("Growing harvester");
+            Console.Error.WriteLine($"Growing harvester {next}");
 
             Vector2 dir = path[1] - next;
             organism.GrowHarvester(organ, next, Map.GetDirectionKey(dir));
@@ -672,12 +671,13 @@ public class Organism
     {
         if (!CanGrow(growthType))
         {
+            Console.Error.WriteLine($"Cant grow!");
             Wait();
             return;
         }
 
-        Console.Error.WriteLine($"Organ {id} (organism {id}) is growing a {growthType} from {organ.position} to {destination} facing {direction}");
-        Console.WriteLine($"GROW {id} {destination.X} {destination.Y} {growthType.ToString().ToUpper()} {direction}");
+        Console.Error.WriteLine($"Organ {organ.id} (organism {id}) is growing a {growthType} from {organ.position} to {destination} facing {direction}");
+        Console.WriteLine($"GROW {organ.id} {destination.X} {destination.Y} {growthType.ToString().ToUpper()} {direction}");
         Use();
     }
 
@@ -689,8 +689,8 @@ public class Organism
             return;
         }
 
-        Console.Error.WriteLine($"Organ {id} (organism {id}) is sporing a root from {organ.position} to {destination}");
-        Console.WriteLine($"SPORE {id} {destination.X} {destination.Y}");
+        Console.Error.WriteLine($"Organ {organ.id} (organism {id}) is sporing a root from {organ.position} to {destination}");
+        Console.WriteLine($"SPORE {organ.id} {destination.X} {destination.Y}");
         sporeQueue.Enqueue(behaviour);
         Use();
     }   
