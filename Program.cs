@@ -423,7 +423,10 @@ public class Map
             .ToHashSet();
 
         spots = adjacent
-            .Where(x => !obstaclePositions.Contains(x))
+            .Where(x => 
+                x.X >= 0 && x.X < width &&
+                x.Y >= 0 && x.Y < height &&
+                !obstaclePositions.Contains(x))
             .ToArray();
 
         return spots.Length > 0;
