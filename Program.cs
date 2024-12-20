@@ -21,6 +21,7 @@ class Player
         ProteinReserve playerProteins = new ProteinReserve();
         ProteinReserve opponentProteins = new ProteinReserve();      
         Dictionary<int, int> organismConfigs = new Dictionary<int, int>();  
+        Queue<Organism.BehaviourType> sporeQueue = new Queue<Organism.BehaviourType>();
 
         while (true)
         {
@@ -388,6 +389,7 @@ public class Organism
     public bool isUsed;
     public Map map;
     public ProteinReserve proteins;
+    public Queue<BehaviourType> sporeQueue;
     public BehaviourType behaviourType
     {
         set => behaviour = GetBehaviour(value);
@@ -532,7 +534,7 @@ public class Organism
         Use();
     }
 
-    public void Spore(Organ organ, Vector2 destination, IBehaviour behaviour)
+    public void Spore(Organ organ, Vector2 destination, BehaviourType behaviour)
     {
         if (!CanSpore(organ))
         {
@@ -542,6 +544,7 @@ public class Organism
 
         Console.Error.WriteLine($"Organ {id} (organism {id}) is sporing a root from {organ.position} to {destination}");
         Console.WriteLine($"SPORE {id} {destination.X} {destination.Y}");
+        sporeQueue.Enqueue(behaviour);
         Use();
     }   
 
