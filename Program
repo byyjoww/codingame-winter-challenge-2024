@@ -376,40 +376,47 @@ public class Organism
 
         if (navigation.TryFindNearestProtein(this, 1, isObstacle, desired, out Navigation.NavigationData navData))
         {
-            Organ organ = (Organ)navData.origin.entity;
-            Cell protein = navData.target;
-
-            Console.Error.WriteLine($"Closest protein to {organ} is {protein.entity} | Distance: {navData.distance} | Path: [{string.Join(", ", navData.path)}]");
-            if (navData.distance == 2 && CanGrow(OrganType.Harvester))
+            if (HarvestProtein((Organ)navData.origin.entity, (Protein)navData.target.entity, navData.distance, navData.path))
             {
-                Vector2 harvesterPos = navData.path[0];
-                Vector2 harvesterDir = Vector2.Normalize(protein.position - harvesterPos);
-                string dirKey = Map.GetDirectionKey(harvesterDir);
-                // Console.Error.WriteLine($"{harvesterPos} | {harvesterDir} | {dirKey}");
-
-                if (TryGrowHarvester(organ, harvesterPos, dirKey))
-                {
-                    return;
-                }
-            }
-            else
-            {
-                if (TryGrowAny(organ, navData.path[0]))
-                {
-                    return;
-                }
-            }
-
-            if (navData.distance > 2)
-            {
-                if (TryGrowAny(organ, navData.path[0]))
-                {
-                    return;
-                }
+                return;
             }
         }
 
         Console.WriteLine("WAIT");
+    }
+
+    private bool HarvestProtein(Organ organ, Protein protein, int distance, List<Vector2> path)
+    {
+        Console.Error.WriteLine($"Closest protein to {organ} is {protein} | Distance: {distance} | Path: [{string.Join(", ", path)}]");
+        if (distance == 2 && CanGrow(OrganType.Harvester))
+        {
+            Vector2 harvesterPos = path[0];
+            Vector2 harvesterDir = Vector2.Normalize(protein.position - harvesterPos);
+            string dirKey = Map.GetDirectionKey(harvesterDir);
+            // Console.Error.WriteLine($"{harvesterPos} | {harvesterDir} | {dirKey}");
+
+            if (TryGrowHarvester(organ, harvesterPos, dirKey))
+            {
+                return true;
+            }
+        }
+        else
+        {
+            if (TryGrowAny(organ, path[0]))
+            {
+                return true;
+            }
+        }
+
+        if (distance > 2)
+        {
+            if (TryGrowAny(organ, path[0]))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public bool TryGrowBasic(Organ organ, Vector2 destination)
