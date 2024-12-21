@@ -268,11 +268,7 @@ public class Map
             }
         }
 
-        foreach (var cell in cells)
-        {
-            // Console.Error.WriteLine($"({cell.position.X},{cell.position.Y}): {cell.entity}");
-        }
-
+        harvested.RemoveWhere(x => !(x.entity is Protein));
         if (addedEntities.Count > 0)
         {
             OnEntitiesAdded?.Invoke(addedEntities);
