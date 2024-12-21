@@ -53,6 +53,7 @@ class Player
                         id = $"protein_{x}_{y}",
                         type = pt,
                         position = new Vector2(x, y),
+                        isHarvested= false,
                     });
                 }
 
@@ -148,6 +149,7 @@ public class Map
 
     public event Action<List<IEntity>> OnEntitiesAdded;
     public event Action<List<IEntity>> OnEntitiesRemoved;
+    public event Action<HashSet<string>> OnProteinsHarvested;
 
     private static Dictionary<string, Vector2> movementDirections = new Dictionary<string, Vector2>
     {
@@ -244,25 +246,30 @@ public class Map
                     // Console.Error.WriteLine($"Empty: ({cell.position.X},{cell.position.Y}): {cell.entity}");
                 }
             }
-
-            // Console.Error.WriteLine($"({cell.position.X},{cell.position.Y}): {cell.entity}");
         }
 
+        HashSet<string> harvested = new HashSet<string>();
         for (int x = 0; x < width; x++)
-        {            
+        {
             for (int y = 0; y < height; y++)
             {
-                var cell = cells[x,y];
+                var cell = cells[x, y];
                 if (cell.entity is Organ oEntity && oEntity.type == OrganType.Harvester)
                 {
                     var facing = GetCellForPositionAtDirection(cell, oEntity.direction);
                     if (facing != null && facing.entity is Protein pEntity)
-                    {
+                    {                        
                         pEntity.isHarvested = true;
-                        cells[(int)facing.position.X, (int)facing.position.Y].entity = pEntity;
+                        facing.entity = pEntity;
+                        harvested.Add(facing.entity.id);
                     }
                 }
             }
+        }
+
+        foreach (var cell in cells)
+        {
+            // Console.Error.WriteLine($"({cell.position.X},{cell.position.Y}): {cell.entity}");
         }
 
         if (addedEntities.Count > 0)
@@ -273,6 +280,11 @@ public class Map
         if (removedEntities.Count > 0)
         {
             OnEntitiesRemoved?.Invoke(removedEntities);
+        }
+
+        if (harvested.Count > 0)
+        {
+            OnProteinsHarvested?.Invoke(harvested);
         }
     }
 
@@ -358,10 +370,10 @@ public class Organism
     {
         if (navigation.TryFindNearestProtein(this, out Navigation.NavigationData navData))
         {
-            Organ organ = navData.organ;
+            Organ organ = (Organ)navData.origin.entity;
             Cell protein = navData.target;
 
-            Console.Error.WriteLine($"Closest protein to {organ} is {protein.entity} | Distance: {navData.distance}");
+            Console.Error.WriteLine($"Closest protein to {organ} is {protein.entity} | Distance: {navData.distance} | Path: [{string.Join(", ", navData.path)}]");
             if (navData.distance == 2)
             {
                 Vector2 harvesterPos = navData.path[navData.path.Count - 2];
@@ -509,8 +521,7 @@ public class Organism
 public class Navigation : IDisposable
 {
     public struct NavigationData
-    {
-        public Organ organ;
+    {        
         public Cell origin;
         public Cell target;
         public int distance;
@@ -534,7 +545,8 @@ public class Navigation : IDisposable
 
         map.OnEntitiesAdded += OnEntitiesAdded;
         map.OnEntitiesRemoved += OnEntitiesRemoved;
-    } 
+        map.OnProteinsHarvested += OnProteinsHarvested;
+    }
 
     public bool TryFindNearestProtein(Organism organism, out NavigationData data)
     {
@@ -554,13 +566,13 @@ public class Navigation : IDisposable
                 continue;
             }
 
-            var entityNavDict = distanceNavDict.First().Value;
-            if (entityNavDict.Count < 1)
+            var result = distanceNavDict.FirstOrDefault(kvp => kvp.Key > 1);
+            if (result.Equals(default(KeyValuePair<int, NavigationData>)))
             {
                 continue;
             }
 
-            var navData = entityNavDict.First().Value;
+            var navData = result.Value.First().Value;
             if (navData.distance < closestDistance)
             {                
                 data = navData;       
@@ -631,8 +643,7 @@ public class Navigation : IDisposable
             organNavDict.TryAdd(organ.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
             organNavDict[organ.id].TryAdd(distance, new Dictionary<string, NavigationData>());    
             organNavDict[organ.id][distance].Add(protein.entity.id, new NavigationData
-            {
-                organ = organ,
+            {                
                 origin = organCell,
                 target = protein,
                 distance = distance,
@@ -740,10 +751,32 @@ public class Navigation : IDisposable
         }
     }    
 
+    private void OnProteinsHarvested(HashSet<string> proteinIds)
+    {
+        foreach (var pid in proteinIds)
+        {
+            for (int i = 0; i < organNavDict.Count; i++)
+            {
+                var distanceDict = organNavDict.ElementAt(i).Value;
+                for (int j = 0; j < distanceDict.Count; j++)
+                {
+                    var distanceKvp = distanceDict.ElementAt(j);
+                    var entityNavDict = distanceKvp.Value;
+                    entityNavDict.Remove(pid);                    
+                    if (entityNavDict.Count < 1)
+                    {
+                        distanceDict.Remove(distanceKvp.Key);
+                    }
+                }
+            }
+        }
+    }
+
     public void Dispose()
     {
         map.OnEntitiesAdded -= OnEntitiesAdded;
         map.OnEntitiesRemoved -= OnEntitiesRemoved;
+        map.OnProteinsHarvested -= OnProteinsHarvested;
     }
 }
 
@@ -851,7 +884,7 @@ public class AStar : IPathfinder
     private int GetMovementCost(Cell from, Cell to)
     {
         if (to.entity == null) { return 1; }
-        if (to.entity is Protein) { return 5; }
+        if (to.entity is Protein) { return 15; }
         return 1;
     }
 
@@ -887,7 +920,7 @@ public struct Protein : IEntity
 
     public override string ToString()
     {
-        return $"Protein {type}";
+        return $"Protein {type} (harvested: {isHarvested})";
     }
 }
 
