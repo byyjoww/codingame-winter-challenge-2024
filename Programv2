@@ -585,7 +585,7 @@ public class Navigation : IDisposable
             var result = distanceNavDict
                 .FirstOrDefault(x => x.Key > 1 
                     && types == null || x.Value.Any(y => types.Contains(((Protein)y.Value.target.entity).type)));
-            if (result.Equals(default(KeyValuePair<int, NavigationData>)) || result.Value.Count < 1)
+            if (result.Equals(default(KeyValuePair<int, NavigationData>)) || result.Value == null || result.Value.Count < 1)
             {
                 continue;
             }
