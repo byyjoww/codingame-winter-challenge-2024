@@ -127,6 +127,14 @@ public class Map
 {
     private Cell[,] cells;
 
+    private static Dictionary<string, Vector2> movementDirections = new Dictionary<string, Vector2>
+    {
+        { "N", new Vector2(0, -1) },  // Up
+        { "S", new Vector2(0, 1) }, // Down
+        { "W", new Vector2(-1, 0) }, // Left
+        { "E", new Vector2(1, 0) },  // Right
+    };
+
     public Map(int width, int height)
     {
         cells = new Cell[width, height];
@@ -204,16 +212,6 @@ public class Map
         return cells[(int)entity.position.X, (int)entity.position.Y];
     }
 
-    public int Distance(Vector2 a, Vector2 b)
-    {
-        return Math.Abs((int)b.X - (int)a.X) + Math.Abs((int)b.Y - (int)a.Y);
-    }
-
-    public static string GetDirectionKey(Vector2 dir)
-    {
-        return movementDirections.FirstOrDefault(x => x.Value == dir).Key;
-    }
-
     public Cell FindNearestProteinBFS(Cell start, HashSet<Cell> exceptions = null)
     {
         int rows = cells.GetLength(0);
@@ -249,6 +247,16 @@ public class Map
 
         // No protein found
         return null;
+    }
+
+    public static int Distance(Vector2 a, Vector2 b)
+    {
+        return Math.Abs((int)b.X - (int)a.X) + Math.Abs((int)b.Y - (int)a.Y);
+    }
+
+    public static string GetDirectionKey(Vector2 dir)
+    {
+        return movementDirections.FirstOrDefault(x => x.Value == dir).Key;
     }
 
     private static IEnumerable<Cell> GetNeighbors(Cell[,] board, Cell cell, int rows, int cols)
@@ -320,7 +328,7 @@ public class Organism
                 continue;
             }
 
-            int distance = map.Distance(cell.position, protein.position);
+            int distance = Map.Distance(cell.position, protein.position);
             if (distance < closestDistance)
             {
                 closest = protein;
@@ -329,17 +337,29 @@ public class Organism
             }
         }
 
+
         if (closest != null)
         {
             Console.Error.WriteLine($"Closest Protein: {closest}");
-            if (closestDistance == 2 && TryGrowHarvester(target, closest.position, dir))
+            Vector2 dir = Vector2.Normalize(closest.position - target.position);
+            if (closestDistance == 2)
             {
-                
+                if (!TryGrowHarvester(target, closest.position, Map.GetDirectionKey(dir)))
+                {
+                    Console.WriteLine("WAIT");
+                }
+            }
+            else if (closestDistance > 2)
+            {
+                if (!TryGrowAny(target, closest.position))
+                {
+                    Console.WriteLine("WAIT");
+                }
             }
             else
             {
-
-            }            
+                Console.WriteLine("WAIT");
+            }
         }
         else
         {
