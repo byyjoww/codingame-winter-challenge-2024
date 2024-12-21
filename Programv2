@@ -164,6 +164,7 @@ public class Map
     public Map(int width, int height)
     {
         cells = new Cell[width, height];
+        harvested = new HashSet<Cell>();
         this.width = cells.GetLength(0);
         this.height = cells.GetLength(1);
         for (int x = 0; x < width; x++)
