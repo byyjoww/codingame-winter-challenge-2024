@@ -527,6 +527,11 @@ public class Navigation : IDisposable
         public int distance;
         public List<Vector2> path;      
         public HashSet<Vector2> pathSet; 
+
+        public override string ToString()
+        {
+            return $"{origin.position} => {target.position} | Distance: {distance} | Path: {string.Join(", ", path)}";
+        }
     }
 
     private Map map;
@@ -634,27 +639,34 @@ public class Navigation : IDisposable
 
         foreach (var protein in proteins)
         {
-            if (!TryGetPath(organCell, protein, out var path))
-            {   
-                continue;
-            }
-
-            int distance = Map.Distance(organCell.position, protein.position);
-            organNavDict.TryAdd(organ.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
-            organNavDict[organ.id].TryAdd(distance, new Dictionary<string, NavigationData>());    
-            organNavDict[organ.id][distance].Add(protein.entity.id, new NavigationData
-            {                
-                origin = organCell,
-                target = protein,
-                distance = path.Count - 1,
-                path = path,
-                pathSet = path.ToHashSet(),
-            });
+            CalculatePathFromOrganToProtein(organ.id, organCell, protein);
         }
 
         // in case we dont find any valid paths
         organNavDict.TryAdd(organ.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
         return organNavDict[organ.id];
+    }
+
+    private void CalculatePathFromOrganToProtein(string id, Cell start, Cell end)
+    {        
+        if (!TryGetPath(start, end, out var path))
+        {   
+            return;
+        }
+
+        int distance = path.Count - 1;
+        organNavDict.TryAdd(id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
+        organNavDict[id].TryAdd(distance, new Dictionary<string, NavigationData>());    
+        var navData = new NavigationData
+        {                
+            origin = start,
+            target = end,
+            distance = distance,
+            path = path,
+            pathSet = path.ToHashSet(),
+        };
+        organNavDict[id][distance].Add(end.entity.id, navData);
+        Console.Error.WriteLine($"Adding navigation data {navData}");
     }
 
     private bool TryGetPath(Cell start, Cell end, out List<Vector2> path)
@@ -685,17 +697,8 @@ public class Navigation : IDisposable
                         var navData = kvp.Value;
                         if (navData.pathSet.Contains(entity.position))
                         {
-                            if (TryGetPath(navData.origin, navData.target, out var path))
-                            {
-                                navData.distance = path.Count - 1;
-                                navData.path = path;
-                                navData.pathSet = navData.path.ToHashSet();
-                                entityNavDict[kvp.Key] = navData;
-                            }
-                            else 
-                            {
-                                entityNavDict.Remove(kvp.Key);
-                            }                            
+                            entityNavDict.Remove(kvp.Key);
+                            CalculatePathFromOrganToProtein(kvp.Key, navData.origin, navData.target);                          
                         }
 
                         if (entityNavDict.Count < 1)
@@ -730,20 +733,11 @@ public class Navigation : IDisposable
                         var navData = kvp.Value;
                         if (navData.pathSet.Contains(entity.position))
                         {
-                            if (TryGetPath(navData.origin, navData.target, out var path))
-                            {
-                                navData.distance = path.Count - 1;
-                                navData.path = path;
-                                navData.pathSet = navData.path.ToHashSet();
-                                entityNavDict[kvp.Key] = navData;
-                            }
-                            else 
-                            {
-                                entityNavDict.Remove(kvp.Key);
-                            }  
+                            entityNavDict.Remove(kvp.Key);
+                            CalculatePathFromOrganToProtein(kvp.Key, navData.origin, navData.target);
                         }
                     }
-                    
+
                     if (entityNavDict.Count < 1)
                     {
                         distanceDict.Remove(distanceKvp.Key);
