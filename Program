@@ -366,15 +366,8 @@ public class Organism
         };
 
         desired.ExceptWith(map.Harvested.Select(x => ((Protein)x.entity).type));
-        Func<IEntity, bool> isObstacle = (x) =>
-        { 
-            Type t = x.GetType();
-            return t == typeof(Wall) 
-                || t == typeof(Organ) 
-                || t == typeof(Protein) && ((Protein)x).isHarvested; 
-        };
-
-        if (navigation.TryFindNearestProtein(this, 1, isObstacle, desired, out Navigation.NavigationData navData))
+        
+        if (navigation.TryFindNearestProtein(this, 1, DefaultObstacleComparer, desired, out Navigation.NavigationData navData))
         {
             if (HarvestProtein((Organ)navData.origin.entity, (Protein)navData.target.entity, navData.distance, navData.path))
             {
@@ -382,7 +375,29 @@ public class Organism
             }
         }
 
+        if (navigation.TryFindNearestProtein(this, 1, NonBlockingObstacleComparer, desired, out Navigation.NavigationData nonBlockingNavData))
+        {
+            if (HarvestProtein((Organ)nonBlockingNavData.origin.entity, (Protein)nonBlockingNavData.target.entity, nonBlockingNavData.distance, nonBlockingNavData.path))
+            {
+                return;
+            }
+        }
+        
         Console.WriteLine("WAIT");
+    }
+
+    private bool DefaultObstacleComparer(IEntity entity)
+    {
+        Type t = entity.GetType();
+        return t == typeof(Wall) 
+            || t == typeof(Organ) 
+            || t == typeof(Protein) && ((Protein)entity).isHarvested;
+    }
+
+    private bool NonBlockingObstacleComparer(IEntity entity)
+    {
+        Type t = entity.GetType();
+        return t == typeof(Wall) || t == typeof(Organ);
     }
 
     private bool HarvestProtein(Organ organ, Protein protein, int distance, List<Vector2> path)
@@ -580,7 +595,12 @@ public class Navigation
 
     public bool TryFindNearestProtein(Organism organism, int minDistance, Func<IEntity, bool> isObstacle, HashSet<ProteinType> types, out NavigationData data)
     {
-        this.isObstacleComparer = isObstacle;
+        bool isDirty = false;
+        if (isObstacleComparer != isObstacle)
+        {
+            isObstacleComparer = isObstacle;
+            isDirty = true;
+        }        
 
         data = default;
         Cell closest = null;
@@ -588,6 +608,11 @@ public class Navigation
 
         foreach (Organ organ in organism.organs)
         {
+            if (isDirty)
+            {
+                FindPathsToAllProteins(organ, includeHarvested: true);
+            }
+
             if (!organNavDict.TryGetValue(organ.id, out var distanceNavDict))
             {
                 // Console.Error.WriteLine($"Creating {organ.id}");
@@ -682,7 +707,7 @@ public class Navigation
             pathSet = path.ToHashSet(),
         };
 
-        organNavDict[start.entity.id][distance].Add(end.entity.id, navData);
+        organNavDict[start.entity.id][distance].TryAdd(end.entity.id, navData);
     }
 
     private bool TryGetPath(Cell start, Cell end, Func<IEntity, bool> isObstacle, out List<Vector2> path)
