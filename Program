@@ -366,7 +366,7 @@ public class Organism
         };
 
         desired.ExceptWith(map.Harvested.Select(x => ((Protein)x.entity).type));
-        if (navigation.TryFindNearestProtein(this, desired, 1, out Navigation.NavigationData navData))
+        if (navigation.TryFindNearestProtein(this, 1, desired, out Navigation.NavigationData navData))
         {
             Organ organ = (Organ)navData.origin.entity;
             Cell protein = navData.target;
@@ -541,6 +541,7 @@ public class Navigation
 
     private Map map;
     private IPathfinder pathfinder;
+    private Func<IEntity, bool> isObstacleComparer;
 
     // first string is organId
     // first integer is distance between organ and entity
@@ -551,6 +552,7 @@ public class Navigation
     {
         this.map = map;
         this.pathfinder = new AStar(map);
+        this.isObstacleComparer = (x) => { return x.GetType() == typeof(Wall) || x.GetType() == typeof(Organ); }
         organNavDict = new Dictionary<string, SortedDictionary<int, Dictionary<string, NavigationData>>>();
     }
 
@@ -561,8 +563,10 @@ public class Navigation
         OnProteinsHarvested(map.OnProteinsHarvested);
     }
 
-    public bool TryFindNearestProtein(Organism organism, HashSet<ProteinType> types, int minDistance, out NavigationData data)
+    public bool TryFindNearestProtein(Organism organism, int minDistance, Func<IEntity, bool> isObstacle, HashSet<ProteinType> types, out NavigationData data)
     {
+        this.isObstacleComparer = isObstacle;
+        
         data = default;
         Cell closest = null;
         int closestDistance = 999;
@@ -572,7 +576,7 @@ public class Navigation
             if (!organNavDict.TryGetValue(organ.id, out var distanceNavDict))
             {
                 // Console.Error.WriteLine($"Creating {organ.id}");
-                distanceNavDict = FindPathsToAllProteins(organ);
+                distanceNavDict = FindPathsToAllProteins(organ, includeHarvested: true);
             }
 
             if (distanceNavDict.Count < 1)
@@ -580,16 +584,18 @@ public class Navigation
                 continue;
             }
 
-            bool requiresType = types != null && types.Count > 0;
-            var result = distanceNavDict
-                .FirstOrDefault(x => x.Key > minDistance 
-                    && (!requiresType || x.Value.Any(y => y.Value.target.entity is Protein pEntity && types.Contains(pEntity.type))));
+            var result = distanceNavDict.FirstOrDefault(x => CachedSearchResultSelector(x, minDistance, types));
             if (result.Equals(default(KeyValuePair<int, NavigationData>)) || result.Value == null || result.Value.Count < 1)
             {
                 continue;
             }
 
-            var navData = result.Value.First().Value;
+            var navData = result.Value.FirstOrDefault(x => CachedSearchResultSelector(x, types)).Value;
+            if (navData.Equals(default(NavigationData)))
+            {
+                continue;
+            }
+
             if (navData.distance < closestDistance)
             {
                 data = navData;
@@ -601,45 +607,28 @@ public class Navigation
         return closest != null;
     }
 
-    public (Cell cell, List<Vector2> path)? FindNearestProteinBFS(Cell start, HashSet<Cell> exceptions = null)
+    private bool CachedSearchResultSelector(KeyValuePair<int, Dictionary<string, NavigationData>> kvp, int minDistance, HashSet<ProteinType> types)
     {
-        var cells = map.Cells;
-        int rows = cells.GetLength(0);
-        int cols = cells.GetLength(1);
-
-        var queue = new Queue<Cell>();
-        var visited = new HashSet<Cell>();
-        exceptions ??= new HashSet<Cell>();
-
-        queue.Enqueue(start);
-        visited.Add(start);
-
-        while (queue.Count > 0)
-        {
-            Cell current = queue.Dequeue();
-
-            // Check if it's a protein and not already targeted
-            if (current.entity is Protein && !exceptions.Contains(current) && TryGetPath(start, current, out var path))
-            {
-                return (current, path);
-            }
-
-            // Explore neighbors
-            foreach (Cell neighbor in map.GetNeighbours(current))
-            {
-                if (!visited.Contains(neighbor) && (neighbor.entity == null || !neighbor.entity.isObstacle))
-                {
-                    visited.Add(neighbor);
-                    queue.Enqueue(neighbor);
-                }
-            }
-        }
-
-        // No protein found
-        return null;
+        bool isOverMinDistance = kvp.Key > minDistance;
+        bool isNotHarvested = kvp.Value.Any(y => y.Value.target.entity is Protein pEntity && !pEntity.isHarvested);
+        bool requiresType = types != null && types.Count > 0;
+        bool isOfRequiredType = kvp.Value.Any(y => y.Value.target.entity is Protein pEntity && types.Contains(pEntity.type));
+        return isOverMinDistance
+            & isNotHarvested
+            && (!requiresType || isOfRequiredType);
     }
 
-    private SortedDictionary<int, Dictionary<string, NavigationData>> FindPathsToAllProteins(Organ organ, HashSet<ProteinType> types = null, bool includeHarvested = false)
+    private bool CachedSearchResultSelector(KeyValuePair<string, NavigationData> kvp, HashSet<ProteinType> types)
+    {
+        bool isProtein = kvp.Value.target.entity is Protein;
+        bool isNotHarvested = isProtein && !((Protein)kvp.Value.target.entity).isHarvested;
+        bool requiresType = types != null && types.Count > 0;
+        bool isOfRequiredType = isProtein && types.Contains(((Protein)kvp.Value.target.entity).type);
+        return isNotHarvested
+            && (!requiresType || isOfRequiredType);
+    }    
+
+    private SortedDictionary<int, Dictionary<string, NavigationData>> FindPathsToAllProteins(Organ organ, Func<IEntity, bool> isObstacle, HashSet<ProteinType> types = null, bool includeHarvested = false)
     {
         Cell organCell = map.GetCellAtEntityPosition(organ);
         Cell[] proteins = map.Cells
@@ -661,7 +650,7 @@ public class Navigation
 
     private void CalculatePathFromOrganToProtein(Cell start, Cell end)
     {
-        if (start.entity == null || !TryGetPath(start, end, out var path))
+        if (start.entity == null || !TryGetPath(start, end, isObstacleComparer, out var path))
         {
             return;
         }
@@ -681,10 +670,10 @@ public class Navigation
         organNavDict[start.entity.id][distance].Add(end.entity.id, navData);
     }
 
-    private bool TryGetPath(Cell start, Cell end, out List<Vector2> path)
+    private bool TryGetPath(Cell start, Cell end, Func<IEntity, bool> isObstacle, out List<Vector2> path)
     {
         path = pathfinder
-            .GetPath(start, end)?
+            .GetPath(start, end, isObstacle)?
             .Select(x => x.position)
             .ToList();
 
@@ -810,7 +799,7 @@ public class Navigation
 
 public interface IPathfinder
 {
-    List<Cell> GetPath(Cell start, Cell end);
+    List<Cell> GetPath(Cell start, Cell end, Func<IEntity, bool> isObstacle);
 }
 
 public class AStar : IPathfinder
@@ -835,7 +824,7 @@ public class AStar : IPathfinder
         closedList = new HashSet<Cell>();
     }
 
-    public List<Cell> GetPath(Cell start, Cell end)
+    public List<Cell> GetPath(Cell start, Cell end, Func<IEntity, bool> isObstacle)
     {
         openList.Clear();
         closedList.Clear();
@@ -867,7 +856,7 @@ public class AStar : IPathfinder
 
             foreach (var neighbor in GetNeighbours(currentNode.Cell))
             {
-                if (neighbor != end && (neighbor.entity != null && neighbor.entity.isObstacle) || closedList.Contains(neighbor))
+                if (neighbor != end && (neighbor.entity != null && isObstacle(neighbor.entity)) || closedList.Contains(neighbor))
                 {
                     continue;
                 }
@@ -937,8 +926,7 @@ public struct Organ : IEntity
     public OrganType type { get; set; }
     public Vector2 position { get; set; }
     public string direction { get; set; }
-    public bool isPlayerOwned { get; set; }
-    public bool isObstacle => true;
+    public bool isPlayerOwned { get; set; }    
 
     public override string ToString()
     {
@@ -951,8 +939,7 @@ public struct Protein : IEntity
     public string id { get; set; }
     public ProteinType type { get; set; }
     public Vector2 position { get; set; }
-    public bool isHarvested { get; set; }
-    public bool isObstacle => isHarvested;
+    public bool isHarvested { get; set; }    
 
     public override string ToString()
     {
@@ -963,8 +950,7 @@ public struct Protein : IEntity
 public struct Wall : IEntity
 {
     public string id { get; set; }
-    public Vector2 position { get; set; }
-    public bool isObstacle => true;
+    public Vector2 position { get; set; }    
 
     public override string ToString()
     {
@@ -975,8 +961,7 @@ public struct Wall : IEntity
 public interface IEntity
 {
     string id { get; }
-    Vector2 position { get; }
-    bool isObstacle { get; }
+    Vector2 position { get; }    
 }
 
 public class ProteinReserve
