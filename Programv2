@@ -287,7 +287,7 @@ public class Organism
 
     public int id;
     public Organ root;
-    public List<Organ> organs = new List<Organ>();    
+    public List<Organ> organs = new List<Organ>();
     public ProteinReserve proteins;
     public Map map;
     public Navigation navigation;
@@ -314,30 +314,30 @@ public class Organism
     {
         if (navigation.TryFindNearestProtein(this, out Navigation.NavigationData navData))
         {
-            Cell origin = navData.origin;
-            Cell target = navData.target;
             Organ organ = navData.organ;
+            Cell protein = navData.target;
 
-            Console.Error.WriteLine($"Closest Protein: {target.entity} | Distance: {navData.distance}");
+            Console.Error.WriteLine($"Closest protein to {organ} is {protein.entity} | Distance: {navData.distance}");
             if (navData.distance == 2)
             {
-                Vector2 dir = Vector2.Normalize(target.position - origin.position);
-                string dirKey = Map.GetDirectionKey(dir);
-                Console.Error.WriteLine($"{dir} | {dirKey}");
+                Vector2 harvesterPos = navData.path[navData.path.Count - 2];
+                Vector2 harvesterDir = Vector2.Normalize(protein.position - harvesterPos);
+                string dirKey = Map.GetDirectionKey(harvesterDir);
+                Console.Error.WriteLine($"{harvesterPos} | {harvesterDir} | {dirKey}");
 
-                if (TryGrowHarvester(organ, target.position, dirKey))
+                if (TryGrowHarvester(organ, harvesterPos, dirKey))
                 {
                     return;
                 }
             }
-            
+
             if (navData.distance > 2)
             {
-                if (TryGrowAny(organ, target.position))
+                if (TryGrowAny(organ, protein.position))
                 {
                     return;
                 }
-            }           
+            }
         }
         
         Console.WriteLine("WAIT");
