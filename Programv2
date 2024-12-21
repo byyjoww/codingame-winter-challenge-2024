@@ -460,24 +460,32 @@ public class Navigation : IDisposable
         map.OnEntitiesRemoved -= OnEntitiesRemoved;
     }
 
-    private List<Vector2> GetPath(Cell start, Cell end)
+    private bool TryGetPath(Cell start, Cell end, out List<Vector2> path)
     {
-        return pathfinder
-            .GetPath(start, end)
+        path = pathfinder
+            .GetPath(start, end)?
             .Select(x => x.position)
             .ToList();
+
+        return path != null;
     }
 
     private SortedDictionary<int, Dictionary<string, NavigationData>> FindPathsToProteins(Organ organ)
     {
         Cell organCell = map.GetCellAtEntityPosition(organ);
-        Cell proteinCell = FindNearestProteinBFS(organCell);
+        var protein = FindNearestProteinBFS(organCell);
+        if (protein == null)
+        {   
+            Console.Error.WriteLine($"Cant find path to proteins from organ {organ.organId}");
+            return new SortedDictionary<int, Dictionary<string, NavigationData>>();
+        }
+
+        var proteinCell = protein.Value.cell;
+        var path = protein.Value.path;
+
         int distance = Map.Distance(organCell.position, proteinCell.position);
-
         organNavDict.TryAdd(organ.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
-        organNavDict[organ.id].TryAdd(distance, new Dictionary<string, NavigationData>());
-
-        var path = GetPath(organCell, proteinCell);
+        organNavDict[organ.id].TryAdd(distance, new Dictionary<string, NavigationData>());    
         organNavDict[organ.id][distance].Add(proteinCell.entity.id, new NavigationData
         {
             organ = organ,
@@ -497,6 +505,8 @@ public class Navigation : IDisposable
         end = default;
         Cell closest = null;        
         closestDistance = 999;
+
+        Console.Error.WriteLine(organism.organs.Count);
         foreach (Organ organ in organism.organs)
         {
             if (!organNavDict.TryGetValue(organ.id, out var distanceNavDict))
@@ -528,7 +538,7 @@ public class Navigation : IDisposable
         return closest != null;
     }
 
-    public Cell FindNearestProteinBFS(Cell start, HashSet<Cell> exceptions = null)
+    public (Cell cell, List<Vector2> path)? FindNearestProteinBFS(Cell start, HashSet<Cell> exceptions = null)
     {
         var cells = map.Cells;
         int rows = cells.GetLength(0);
@@ -546,9 +556,9 @@ public class Navigation : IDisposable
             Cell current = queue.Dequeue();
 
             // Check if it's a protein and not already targeted
-            if (current.entity is Protein && !exceptions.Contains(current))
+            if (current.entity is Protein && !exceptions.Contains(current) && TryGetPath(start, current, out var path))
             {
-                return current;
+                return (current, path);
             }
 
             // Explore neighbors
@@ -576,16 +586,29 @@ public class Navigation : IDisposable
                 var distanceDict = organNavDict.ElementAt(i).Value;
                 for (int j = 0; j < distanceDict.Count; j++)
                 {
-                    var entityNavDict = distanceDict.ElementAt(j).Value;
+                    var distanceKvp = distanceDict.ElementAt(j);
+                    var entityNavDict = distanceKvp.Value;
                     for (int k = 0; k < entityNavDict.Count; k++)
                     {
                         var kvp = entityNavDict.ElementAt(k);
                         var navData = kvp.Value;
                         if (navData.pathSet.Contains(entity.position))
                         {
-                            navData.path = GetPath(navData.origin, navData.target);
-                            navData.pathSet = navData.path.ToHashSet();
-                            entityNavDict[kvp.Key] = navData;
+                            if (TryGetPath(navData.origin, navData.target, out var path))
+                            {
+                                navData.path = path;
+                                navData.pathSet = navData.path.ToHashSet();
+                                entityNavDict[kvp.Key] = navData;
+                            }
+                            else 
+                            {
+                                entityNavDict.Remove(kvp.Key);
+                            }                            
+                        }
+
+                        if (entityNavDict.Count < 1)
+                        {
+                            distanceDict.Remove(distanceKvp.Key);
                         }
                     }
                 }
@@ -605,8 +628,8 @@ public class Navigation : IDisposable
                 var distanceDict = organNavDict.ElementAt(i).Value;
                 for (int j = 0; j < distanceDict.Count; j++)
                 {
-                    int distanceKey = distanceDict.ElementAt(j).Key;
-                    var entityNavDict = distanceDict.ElementAt(j).Value;
+                    var distanceKvp = distanceDict.ElementAt(j);
+                    var entityNavDict = distanceKvp.Value;
                     entityNavDict.Remove(entity.id);
 
                     for (int k = 0; k < entityNavDict.Count; k++)
@@ -615,15 +638,22 @@ public class Navigation : IDisposable
                         var navData = kvp.Value;
                         if (navData.pathSet.Contains(entity.position))
                         {
-                            navData.path = GetPath(navData.origin, navData.target);
-                            navData.pathSet = navData.path.ToHashSet();
-                            entityNavDict[kvp.Key] = navData;
+                            if (TryGetPath(navData.origin, navData.target, out var path))
+                            {
+                                navData.path = path;
+                                navData.pathSet = navData.path.ToHashSet();
+                                entityNavDict[kvp.Key] = navData;
+                            }
+                            else 
+                            {
+                                entityNavDict.Remove(kvp.Key);
+                            }  
                         }
                     }
                     
                     if (entityNavDict.Count < 1)
                     {
-                        distanceDict.Remove(distanceKey);
+                        distanceDict.Remove(distanceKvp.Key);
                     }
                 }
             }
