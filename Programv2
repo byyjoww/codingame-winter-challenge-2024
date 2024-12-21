@@ -312,24 +312,28 @@ public class Organism
 
     public void CollectClosestProtein()
     {
-        if (navigation.TryFindNearestProtein(this, out Organ organ, out Protein protein, out int distance))
+        if (navigation.TryFindNearestProtein(this, out Navigation.NavigationData navData))
         {
-            Console.Error.WriteLine($"Closest Protein: {protein} | Distance: {distance}");
-            if (distance == 2)
+            Cell origin = navData.origin;
+            Cell target = navData.target;
+            Organ organ = navData.organ;
+
+            Console.Error.WriteLine($"Closest Protein: {target.entity} | Distance: {navData.distance}");
+            if (navData.distance == 2)
             {
-                Vector2 dir = Vector2.Normalize(protein.position - organ.position);
+                Vector2 dir = Vector2.Normalize(target.position - origin.position);
                 string dirKey = Map.GetDirectionKey(dir);
                 Console.Error.WriteLine($"{dir} | {dirKey}");
 
-                if (TryGrowHarvester(organ, protein.position, dirKey))
+                if (TryGrowHarvester(organ, target.position, dirKey))
                 {
                     return;
                 }
             }
             
-            if (distance > 2)
+            if (navData.distance > 2)
             {
-                if (TryGrowAny(organ, protein.position))
+                if (TryGrowAny(organ, target.position))
                 {
                     return;
                 }
@@ -460,7 +464,7 @@ public class Organism
 
 public class Navigation : IDisposable
 {
-    private struct NavigationData
+    public struct NavigationData
     {
         public Organ organ;
         public Cell origin;
@@ -533,12 +537,11 @@ public class Navigation : IDisposable
         return organNavDict[organ.id];
     }
 
-    public bool TryFindNearestProtein(Organism organism, out Organ start, out Protein end, out int closestDistance)
+    public bool TryFindNearestProtein(Organism organism, out NavigationData data)
     {
-        start = default;
-        end = default;
+        data = default;       
         Cell closest = null;        
-        closestDistance = 999;
+        int closestDistance = 999;
 
         foreach (Organ organ in organism.organs)
         {
@@ -561,8 +564,7 @@ public class Navigation : IDisposable
             var navData = entityNavDict.First().Value;
             if (navData.distance < closestDistance)
             {                
-                start = organ;
-                end = (Protein)navData.target.entity;
+                data = navData;       
                 closest = navData.target;
                 closestDistance = navData.distance;
             }
@@ -774,8 +776,7 @@ public class AStar : IPathfinder
             }
         }
 
-        Console.Error.WriteLine($"[AStar] No path found from {start} to {end}");
-        return null; // No path found
+        return null;
     }
 
     private List<Cell> ReconstructPath(Node node)
@@ -784,21 +785,20 @@ public class AStar : IPathfinder
         while (node != null)
         {
             path.Add(node.Cell);
-            node = node.Parent;  // Assuming a parent reference to backtrack
+            node = node.Parent;
         }
         path.Reverse();
         return path;
     }
 
+    // Heuristic cost (e.g., Manhattan distance)
     private int GetHCost(Cell cell, Cell end)
-    {
-        // Heuristic cost (e.g., Manhattan distance)
+    {        
         return Map.Distance(cell.position, end.position);
     }
 
     private int GetMovementCost(Cell from, Cell to)
     {
-        // Assuming movement cost between adjacent cells is constant (e.g., 1)
         return 1;
     }
 
