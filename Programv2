@@ -8,6 +8,8 @@ using System.Numerics;
 
 class Player
 {
+    private static DateTime ts;   
+
     static void Main(string[] args)
     {
         string[] inputs;
@@ -26,10 +28,12 @@ class Player
 
         while (true)
         {
-            // New Round
-            map.SetDirty();
-
+            // New round starts when we first read input     
             int entityCount = int.Parse(Console.ReadLine());
+            
+            ts = DateTime.UtcNow;
+            Console.Error.WriteLine($"Start turn");
+            
             for (int i = 0; i < entityCount; i++)
             {
                 inputs = Console.ReadLine().Split(' ');
@@ -87,6 +91,7 @@ class Player
                         organId = organId,
                         type = ot,
                         position = new Vector2(x, y),
+                        direction = organDir,
                         isPlayerOwned = owner == 1,
                     };
 
@@ -105,12 +110,14 @@ class Player
             opponentProteins.a = int.Parse(inputs[0]);
             opponentProteins.b = int.Parse(inputs[1]);
             opponentProteins.c = int.Parse(inputs[2]);
-            opponentProteins.d = int.Parse(inputs[3]);
+            opponentProteins.d = int.Parse(inputs[3]);            
 
             var entities = new List<IEntity>();
             entities.AddRange(proteins.Cast<IEntity>());
             entities.AddRange(walls.Cast<IEntity>());
             entities.AddRange(organs.Cast<IEntity>());
+
+            map.SetDirty();
             map.SetEntities(entities);
 
             var playerOrganisms = organisms.Where(x => x.isPlayerOwned).ToArray();
@@ -120,15 +127,22 @@ class Player
                 Organism organism = playerOrganisms[i];
                 organism.CollectClosestProtein();
             }
+
+            Console.Error.WriteLine($"End turn {GetTimeSinceStartOfTurn()}");
         }
+    }
+
+    public static float GetTimeSinceStartOfTurn()
+    {
+        return (float)(DateTime.UtcNow - ts).TotalMilliseconds;
     }
 }
 
 public class Map
 {
     private Cell[,] cells;
-    private int rows;
-    private int cols;
+    private int width;
+    private int height;
 
     public Cell[,] Cells => cells;
 
@@ -146,8 +160,8 @@ public class Map
     public Map(int width, int height)
     {
         cells = new Cell[width, height];
-        rows = cells.GetLength(0);
-        cols = cells.GetLength(1);        
+        this.width = cells.GetLength(0);
+        this.height = cells.GetLength(1);        
         for (int x = 0; x < width; x++)
         {            
             for (int y = 0; y < height; y++)
@@ -164,20 +178,12 @@ public class Map
 
     public IEnumerable<Cell> GetNeighbours(Cell cell)
     {
-        var directions = new (int dx, int dy)[] 
-        { 
-            (0, 1),
-            (1, 0),
-            (0, -1),
-            (-1, 0),
-        };
-
-        foreach (var (dx, dy) in directions)
+        foreach (var dir in movementDirections.Values)
         {
-            int newX = (int)cell.position.X + dx;
-            int newY = (int)cell.position.Y + dy;
+            int newX = (int)cell.position.X + (int)dir.X;
+            int newY = (int)cell.position.Y + (int)dir.Y;
 
-            if (newX >= 0 && newX < rows && newY >= 0 && newY < cols)
+            if (newX >= 0 && newX < width && newY >= 0 && newY < height)
             {
                 yield return cells[newX, newY];
             }
@@ -242,6 +248,23 @@ public class Map
             // Console.Error.WriteLine($"({cell.position.X},{cell.position.Y}): {cell.entity}");
         }
 
+        for (int x = 0; x < width; x++)
+        {            
+            for (int y = 0; y < height; y++)
+            {
+                var cell = cells[x,y];
+                if (cell.entity is Organ oEntity && oEntity.type == OrganType.Harvester)
+                {
+                    var facing = GetCellForPositionAtDirection(cell, oEntity.direction);
+                    if (facing != null && facing.entity is Protein pEntity)
+                    {
+                        pEntity.isHarvested = true;
+                        cells[(int)facing.position.X, (int)facing.position.Y].entity = pEntity;
+                    }
+                }
+            }
+        }
+
         if (addedEntities.Count > 0)
         {
             OnEntitiesAdded?.Invoke(addedEntities);
@@ -256,6 +279,27 @@ public class Map
     public Cell GetCellAtEntityPosition(IEntity entity)    
     {
         return cells[(int)entity.position.X, (int)entity.position.Y];
+    }
+
+    public Cell GetCellForPositionAtDirection(Cell cell, string direction)    
+    {
+        if (!movementDirections.ContainsKey(direction))
+        {
+            return null;
+        }
+
+        Vector2 offset = movementDirections[direction];
+        Vector2 targetPos = cell.position + offset;
+
+        int targetX = (int)targetPos.X;
+        int targetY = (int)targetPos.Y;
+        
+        if (targetX >= 0 && targetX < width && targetY >= 0 && targetY < height)
+        {
+            return cells[targetX, targetY];
+        }
+
+        return null;
     }
 
     public static int Distance(Vector2 a, Vector2 b)
@@ -490,52 +534,7 @@ public class Navigation : IDisposable
 
         map.OnEntitiesAdded += OnEntitiesAdded;
         map.OnEntitiesRemoved += OnEntitiesRemoved;
-    }
-
-    public void Dispose()
-    {
-        map.OnEntitiesAdded -= OnEntitiesAdded;
-        map.OnEntitiesRemoved -= OnEntitiesRemoved;
-    }
-
-    private bool TryGetPath(Cell start, Cell end, out List<Vector2> path)
-    {
-        path = pathfinder
-            .GetPath(start, end)?
-            .Select(x => x.position)
-            .ToList();
-
-        return path != null;
-    }
-
-    private SortedDictionary<int, Dictionary<string, NavigationData>> FindPathsToProteins(Organ organ)
-    {
-        Cell organCell = map.GetCellAtEntityPosition(organ);
-        var protein = FindNearestProteinBFS(organCell);
-        if (protein == null)
-        {   
-            Console.Error.WriteLine($"Cant find path to proteins from organ {organ.organId}");
-            return new SortedDictionary<int, Dictionary<string, NavigationData>>();
-        }
-
-        var proteinCell = protein.Value.cell;
-        var path = protein.Value.path;
-
-        int distance = Map.Distance(organCell.position, proteinCell.position);
-        organNavDict.TryAdd(organ.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
-        organNavDict[organ.id].TryAdd(distance, new Dictionary<string, NavigationData>());    
-        organNavDict[organ.id][distance].Add(proteinCell.entity.id, new NavigationData
-        {
-            organ = organ,
-            origin = organCell,
-            target = proteinCell,
-            distance = distance,
-            path = path,
-            pathSet = path.ToHashSet(),
-        });
-
-        return organNavDict[organ.id];
-    }
+    } 
 
     public bool TryFindNearestProtein(Organism organism, out NavigationData data)
     {
@@ -547,7 +546,7 @@ public class Navigation : IDisposable
         {
             if (!organNavDict.TryGetValue(organ.id, out var distanceNavDict))
             {
-                distanceNavDict = FindPathsToProteins(organ);
+                distanceNavDict = FindPathsToAllProteins(organ);
             }
 
             if (distanceNavDict.Count < 1)
@@ -610,6 +609,52 @@ public class Navigation : IDisposable
         // No protein found
         return null;
     }
+
+    private SortedDictionary<int, Dictionary<string, NavigationData>> FindPathsToAllProteins(Organ organ, HashSet<ProteinType> types = null, bool includeHarvested = false)
+    {
+        Cell organCell = map.GetCellAtEntityPosition(organ);
+        Cell[] proteins = map.Cells
+            .Cast<Cell>()
+            .Where(x => x.entity is Protein pEntity 
+                && (types == null || types.Contains(pEntity.type)) 
+                && (includeHarvested || !pEntity.isHarvested))
+            .ToArray();
+
+        foreach (var protein in proteins)
+        {
+            if (!TryGetPath(organCell, protein, out var path))
+            {   
+                continue;
+            }
+
+            int distance = Map.Distance(organCell.position, protein.position);
+            organNavDict.TryAdd(organ.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
+            organNavDict[organ.id].TryAdd(distance, new Dictionary<string, NavigationData>());    
+            organNavDict[organ.id][distance].Add(protein.entity.id, new NavigationData
+            {
+                organ = organ,
+                origin = organCell,
+                target = protein,
+                distance = distance,
+                path = path,
+                pathSet = path.ToHashSet(),
+            });
+        }
+
+        // in case we dont find any valid paths
+        organNavDict.TryAdd(organ.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
+        return organNavDict[organ.id];
+    }
+
+    private bool TryGetPath(Cell start, Cell end, out List<Vector2> path)
+    {
+        path = pathfinder
+            .GetPath(start, end)?
+            .Select(x => x.position)
+            .ToList();
+
+        return path != null;
+    }  
 
     private void OnEntitiesAdded(IEnumerable<IEntity> entities)
     {
@@ -694,6 +739,12 @@ public class Navigation : IDisposable
             }
         }
     }    
+
+    public void Dispose()
+    {
+        map.OnEntitiesAdded -= OnEntitiesAdded;
+        map.OnEntitiesRemoved -= OnEntitiesRemoved;
+    }
 }
 
 public interface IPathfinder
@@ -816,6 +867,7 @@ public struct Organ : IEntity
     public int organId { get; set; }
     public OrganType type { get; set; }
     public Vector2 position { get; set; }
+    public string direction { get; set; }
     public bool isPlayerOwned { get; set; }
     public bool isObstacle => true;
 
@@ -830,7 +882,8 @@ public struct Protein : IEntity
     public string id { get; set; }
     public ProteinType type { get; set; }
     public Vector2 position { get; set; }
-    public bool isObstacle => false;
+    public bool isHarvested { get; set; }
+    public bool isObstacle => false;    
 
     public override string ToString()
     {
