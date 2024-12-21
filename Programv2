@@ -563,6 +563,7 @@ public class Navigation : IDisposable
         {
             if (!organNavDict.TryGetValue(organ.id, out var distanceNavDict))
             {
+                Console.Error.WriteLine($"Creating {organ.id}");
                 distanceNavDict = FindPathsToAllProteins(organ);
             }
 
@@ -666,7 +667,7 @@ public class Navigation : IDisposable
             pathSet = path.ToHashSet(),
         };
         organNavDict[id][distance].Add(end.entity.id, navData);
-        Console.Error.WriteLine($"Adding navigation data {navData}");
+        // Console.Error.WriteLine($"Adding navigation data {navData}");
     }
 
     private bool TryGetPath(Cell start, Cell end, out List<Vector2> path)
@@ -698,7 +699,8 @@ public class Navigation : IDisposable
                         if (navData.pathSet.Contains(entity.position))
                         {
                             entityNavDict.Remove(kvp.Key);
-                            CalculatePathFromOrganToProtein(kvp.Key, navData.origin, navData.target);                          
+                            Console.Error.WriteLine($"Addition: Recalculating {navData.origin.entity.id} > {kvp.Key} | {navData}");
+                            CalculatePathFromOrganToProtein(navData.origin.entity.id, navData.origin, navData.target);                          
                         }
 
                         if (entityNavDict.Count < 1)
@@ -734,7 +736,8 @@ public class Navigation : IDisposable
                         if (navData.pathSet.Contains(entity.position))
                         {
                             entityNavDict.Remove(kvp.Key);
-                            CalculatePathFromOrganToProtein(kvp.Key, navData.origin, navData.target);
+                            Console.Error.WriteLine($"Removal: Recalculating {navData.origin.entity.id} > {kvp.Key} | {navData}");
+                            CalculatePathFromOrganToProtein(navData.origin.entity.id, navData.origin, navData.target);
                         }
                     }
 
@@ -835,7 +838,7 @@ public class AStar : IPathfinder
 
             foreach (var neighbor in GetNeighbours(currentNode.Cell))
             {
-                if (neighbor.entity?.isObstacle == true || closedList.Contains(neighbor))
+                if ((neighbor.entity != null && neighbor.entity.isObstacle) || closedList.Contains(neighbor))
                 {
                     continue;
                 }                    
