@@ -702,7 +702,7 @@ public class Navigation : IDisposable
                         recalculations.Add(delegate
                         {
                             entityNavDict.Remove(kvp.Key);
-                            Console.Error.WriteLine($"Addition: Recalculating {navData.origin.entity.id} > {kvp.Key}");
+                            // Console.Error.WriteLine($"Addition: Recalculating {navData.origin.entity.id} > {kvp.Key}");
                             CalculatePathFromOrganToProtein(navData.origin, navData.target);
                         });
                     }
@@ -755,7 +755,7 @@ public class Navigation : IDisposable
                         recalculations.Add(delegate
                         {
                             entityNavDict.Remove(kvp.Key);
-                            Console.Error.WriteLine($"Removal: Recalculating {navData.origin.entity.id} > {kvp.Key}");
+                            // Console.Error.WriteLine($"Removal: Recalculating {navData.origin.entity.id} > {kvp.Key}");
                             CalculatePathFromOrganToProtein(navData.origin, navData.target);
                         });
                     }
@@ -862,7 +862,7 @@ public class AStar : IPathfinder
 
             foreach (var neighbor in GetNeighbours(currentNode.Cell))
             {
-                if ((neighbor.entity != null && neighbor.entity.isObstacle) || closedList.Contains(neighbor))
+                if (neighbor != end && (neighbor.entity != null && neighbor.entity.isObstacle) || closedList.Contains(neighbor))
                 {
                     continue;
                 }                    
@@ -942,7 +942,7 @@ public struct Protein : IEntity
     public ProteinType type { get; set; }
     public Vector2 position { get; set; }
     public bool isHarvested { get; set; }
-    public bool isObstacle => false;    
+    public bool isObstacle => true;    
 
     public override string ToString()
     {
