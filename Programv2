@@ -257,9 +257,11 @@ public class Cell
 
 public class Organism
 {
+    private HashSet<int> organIds = new HashSet<int>();
+
     public int id;
     public Organ root;
-    public List<Organ> organs = new List<Organ>();
+    public List<Organ> organs = new List<Organ>();    
     public ProteinReserve proteins;
     public Map map;
     public Navigation navigation;
@@ -269,7 +271,13 @@ public class Organism
 
     public void AddOrgan(Organ organ)
     {
+        if (organIds.Contains(organ.organId))
+        {
+            return;
+        }
+
         this.organs.Add(organ);
+        this.organIds.Add(organ.organId);
         if (organ.type == OrganType.Root)
         {
             root = organ;
