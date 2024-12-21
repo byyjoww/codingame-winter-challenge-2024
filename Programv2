@@ -130,6 +130,9 @@ public class Map
 
     public Cell[,] Cells => cells;
 
+    public event Action<List<IEntity>> OnEntitiesAdded;
+    public event Action<List<IEntity>> OnEntitiesRemoved;
+
     private static Dictionary<string, Vector2> movementDirections = new Dictionary<string, Vector2>
     {
         { "N", new Vector2(0, -1) },  // Up
@@ -165,6 +168,9 @@ public class Map
 
     public void SetEntities(IEnumerable<IEntity> entities)
     {
+        var addedEntities = new List<IEntity>();
+        var removedEntities = new List<IEntity>();
+
         foreach (var entity in entities)
         {
             Cell cell = GetCellAtEntityPosition(entity);
@@ -180,7 +186,7 @@ public class Map
                 // entity was added to cell
                 cell.entity = entity;
                 cell.isDirty = false;
-
+                addedEntities.Add(entity);
                 // Console.Error.WriteLine($"Added: ({cell.position.X},{cell.position.Y}): {cell.entity}");
             }
         }
@@ -192,6 +198,7 @@ public class Map
                 if (cell.entity != null)
                 {
                     // entity was removed from cell
+                    removedEntities.Add(cell.entity);
                     cell.entity = null;
                     cell.isDirty = false;
 
@@ -207,6 +214,16 @@ public class Map
             }
 
             // Console.Error.WriteLine($"({cell.position.X},{cell.position.Y}): {cell.entity}");
+        }
+
+        if (addedEntities.Count > 0)
+        {
+            OnEntitiesAdded?.Invoke(addedEntities);
+        }
+
+        if (removedEntities.Count > 0)
+        {
+            OnEntitiesRemoved?.Invoke(removedEntities);
         }
     }
 
@@ -407,7 +424,7 @@ public class Organism
     }
 }
 
-public class Navigation
+public class Navigation : IDisposable
 {
     private struct NavigationData
     {
@@ -420,6 +437,7 @@ public class Navigation
     }
 
     private Map map;
+    private IPathfinder pathfinder;
 
     // first string is organId
     // first integer is distance between organ and entity
@@ -429,69 +447,25 @@ public class Navigation
     public Navigation(Map map)
     {
         this.map = map;
+        this.pathfinder = new AStar();
         organNavDict = new Dictionary<string, SortedDictionary<int, Dictionary<string, NavigationData>>>();
+
+        map.OnEntitiesAdded += OnEntitiesAdded;
+        map.OnEntitiesRemoved += OnEntitiesRemoved;
     }
 
-    public void OnEntityAdded(IEntity entity)
+    public void Dispose()
     {
-        for (int i = 0; i < organNavDict.Count; i++)
-        {
-           var distanceDict = organNavDict.ElementAt(i).Value;
-            for (int j = 0; j < distanceDict.Count; j++)
-            {
-                 var entityNavDict = distanceDict.ElementAt(j).Value;
-                for (int k = 0; k < entityNavDict.Count; k++)
-                {
-                    var kvp = entityNavDict.ElementAt(k);
-                    var navData = kvp.Value;
-                    if (navData.pathSet.Contains(entity.position))
-                    {
-                        navData.path = GetPath(navData.origin, navData.target);
-                        navData.pathSet = navData.path.ToHashSet();
-                        entityNavDict[kvp.Key] = navData;
-                    }
-                }
-            }
-        }
-    }
-
-    public void OnEntityRemoved(IEntity entity)
-    {
-        if (entity == null) { return; }
-
-        organNavDict.Remove(entity.id);
-        for (int i = 0; i < organNavDict.Count; i++)
-        {
-            var distanceDict = organNavDict.ElementAt(i).Value;
-            for (int j = 0; j < distanceDict.Count; j++)
-            {
-                int distanceKey = distanceDict.ElementAt(j).Key;
-                var entityNavDict = distanceDict.ElementAt(j).Value;
-                entityNavDict.Remove(entity.id);
-
-                for (int k = 0; k < entityNavDict.Count; k++)
-                {
-                    var kvp = entityNavDict.ElementAt(k);
-                    var navData = kvp.Value;
-                    if (navData.pathSet.Contains(entity.position))
-                    {
-                        navData.path = GetPath(navData.origin, navData.target);
-                        navData.pathSet = navData.path.ToHashSet();
-                        entityNavDict[kvp.Key] = navData;
-                    }
-                }
-                
-                if (entityNavDict.Count < 1)
-                {
-                    distanceDict.Remove(distanceKey);
-                }
-            }
-        }
+        map.OnEntitiesAdded -= OnEntitiesAdded;
+        map.OnEntitiesRemoved -= OnEntitiesRemoved;
     }
 
     private List<Vector2> GetPath(Cell start, Cell end)
     {
-        return new List<Vector2>();
+        return pathfinder
+            .GetPath(start, end)
+            .Select(x => x.position)
+            .ToList();
     }
 
     private SortedDictionary<int, Dictionary<string, NavigationData>> FindPathsToProteins(Organ organ)
@@ -592,6 +566,70 @@ public class Navigation
         return null;
     }
 
+    private void OnEntitiesAdded(IEnumerable<IEntity> entities)
+    {
+        foreach (var entity in entities)
+        {
+            if (entity == null) { continue; }
+            for (int i = 0; i < organNavDict.Count; i++)
+            {
+                var distanceDict = organNavDict.ElementAt(i).Value;
+                for (int j = 0; j < distanceDict.Count; j++)
+                {
+                    var entityNavDict = distanceDict.ElementAt(j).Value;
+                    for (int k = 0; k < entityNavDict.Count; k++)
+                    {
+                        var kvp = entityNavDict.ElementAt(k);
+                        var navData = kvp.Value;
+                        if (navData.pathSet.Contains(entity.position))
+                        {
+                            navData.path = GetPath(navData.origin, navData.target);
+                            navData.pathSet = navData.path.ToHashSet();
+                            entityNavDict[kvp.Key] = navData;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void OnEntitiesRemoved(IEnumerable<IEntity> entities)
+    {
+        foreach (var entity in entities)
+        {
+            if (entity == null) { continue; }
+
+            organNavDict.Remove(entity.id);
+            for (int i = 0; i < organNavDict.Count; i++)
+            {
+                var distanceDict = organNavDict.ElementAt(i).Value;
+                for (int j = 0; j < distanceDict.Count; j++)
+                {
+                    int distanceKey = distanceDict.ElementAt(j).Key;
+                    var entityNavDict = distanceDict.ElementAt(j).Value;
+                    entityNavDict.Remove(entity.id);
+
+                    for (int k = 0; k < entityNavDict.Count; k++)
+                    {
+                        var kvp = entityNavDict.ElementAt(k);
+                        var navData = kvp.Value;
+                        if (navData.pathSet.Contains(entity.position))
+                        {
+                            navData.path = GetPath(navData.origin, navData.target);
+                            navData.pathSet = navData.path.ToHashSet();
+                            entityNavDict[kvp.Key] = navData;
+                        }
+                    }
+                    
+                    if (entityNavDict.Count < 1)
+                    {
+                        distanceDict.Remove(distanceKey);
+                    }
+                }
+            }
+        }
+    }
+
     private static IEnumerable<Cell> GetNeighbors(Cell[,] board, Cell cell, int rows, int cols)
     {
         var directions = new (int dx, int dy)[] 
@@ -612,6 +650,118 @@ public class Navigation
                 yield return board[newX, newY];
             }
         }
+    }
+}
+
+public interface IPathfinder
+{
+    List<Cell> GetPath(Cell start, Cell end);
+}
+
+public class AStar : IPathfinder
+{
+    private class Node
+    {
+        public Cell Cell { get; set; }
+        public int FCost { get; set; }
+        public int GCost { get; set; }
+        public int HCost { get; set; }
+        public Node Parent { get; set; }
+    }
+
+    private PriorityQueue<Node, int> openList;
+    private HashSet<Cell> closedList;
+
+    public AStar()
+    {
+        openList = new PriorityQueue<Node, int>();
+        closedList = new HashSet<Cell>();
+    }
+
+    public List<Cell> GetPath(Cell start, Cell end)
+    {
+        openList.Clear();
+        closedList.Clear();
+
+        // Initialize the starting node
+        var startNode = new Node
+        {
+            Cell = start,
+            GCost = 0,  // No cost to start
+            HCost = GetHCost(start, end), // Heuristic cost to the end
+            FCost = 0 + GetHCost(start, end),
+            Parent = null,
+        };
+
+        openList.Enqueue(startNode, startNode.FCost);
+
+        while (openList.Count > 0)
+        {
+            // Get the node with the lowest fCost (highest priority)
+            var currentNode = openList.Dequeue();
+
+            // If we've reached the target, reconstruct the path
+            if (currentNode.Cell == end)
+            {
+                return ReconstructPath(currentNode);
+            }
+
+            closedList.Add(currentNode.Cell);
+
+            foreach (var neighbor in GetNeighbors(currentNode.Cell))
+            {
+                if (closedList.Contains(neighbor))
+                {
+                    continue;
+                }                    
+
+                int tentativeGCost = currentNode.GCost + GetMovementCost(currentNode.Cell, neighbor);
+
+                // If the neighbor is not in the open list, or we found a shorter path to it
+                var neighborNode = new Node
+                {
+                    Cell = neighbor,
+                    GCost = tentativeGCost,
+                    HCost = GetHCost(neighbor, end),
+                    FCost = tentativeGCost + GetHCost(neighbor, end),
+                    Parent = currentNode,
+                };
+
+                openList.Enqueue(neighborNode, neighborNode.FCost);
+            }
+        }
+
+        return null; // No path found
+    }
+
+    private List<Cell> ReconstructPath(Node node)
+    {
+        var path = new List<Cell>();
+        while (node != null)
+        {
+            path.Add(node.Cell);
+            node = node.Parent;  // Assuming a parent reference to backtrack
+        }
+        path.Reverse();
+        return path;
+    }
+
+    private int GetHCost(Cell cell, Cell end)
+    {
+        // Heuristic cost (e.g., Manhattan distance)
+        return Map.Distance(cell.position, end.position);
+    }
+
+    private int GetMovementCost(Cell from, Cell to)
+    {
+        // Assuming movement cost between adjacent cells is constant (e.g., 1)
+        return 1;
+    }
+
+    private List<Cell> GetNeighbors(Cell cell)
+    {
+        // Return a list of neighboring cells
+        return new List<Cell>();
     }
 }
 
