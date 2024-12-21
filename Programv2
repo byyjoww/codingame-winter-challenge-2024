@@ -755,7 +755,7 @@ public class AStar : IPathfinder
 
             foreach (var neighbor in GetNeighbours(currentNode.Cell))
             {
-                if (closedList.Contains(neighbor))
+                if (neighbor.entity?.isObstacle == true || closedList.Contains(neighbor))
                 {
                     continue;
                 }                    
@@ -800,7 +800,6 @@ public class AStar : IPathfinder
     private int GetMovementCost(Cell from, Cell to)
     {
         if (to.entity == null) { return 1; }
-        if (to.entity.isObstacle) { return 999; }
         if (to.entity is Protein) { return 5; }
         return 1;
     }
