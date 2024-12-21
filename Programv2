@@ -17,10 +17,7 @@ class Player
         int width = int.Parse(inputs[0]);
         int height = int.Parse(inputs[1]);
 
-        Map map = new Map(width, height);
-        List<Protein> proteins = new List<Protein>();
-        List<Organ> organs = new List<Organ>();
-        List<Wall> walls = new List<Wall>();
+        Map map = new Map(width, height);        
         List<Organism> organisms = new List<Organism>();
 
         ProteinReserve playerProteins = new ProteinReserve();
@@ -33,6 +30,10 @@ class Player
             
             ts = DateTime.UtcNow;
             Console.Error.WriteLine($"Start turn");
+
+            List<Protein> proteins = new List<Protein>();
+            List<Organ> organs = new List<Organ>();
+            List<Wall> walls = new List<Wall>();
             
             for (int i = 0; i < entityCount; i++)
             {
@@ -118,7 +119,6 @@ class Player
             entities.AddRange(walls.Cast<IEntity>());
             entities.AddRange(organs.Cast<IEntity>());
 
-            map.SetDirty();
             map.SetEntities(entities);
 
             var playerOrganisms = organisms.Where(x => x.isPlayerOwned).ToArray();
@@ -192,18 +192,15 @@ public class Map
         }
     }
 
-    public void SetDirty()
-    {
-        foreach (var cell in cells)
-        {
-            cell.isDirty = true;
-        }
-    }
-
     public void SetEntities(IEnumerable<IEntity> entities)
     {
         var addedEntities = new List<IEntity>();
         var removedEntities = new List<IEntity>();
+
+        foreach (var cell in cells)
+        {
+            cell.isDirty = true;
+        }
 
         foreach (var entity in entities)
         {
@@ -221,7 +218,7 @@ public class Map
                 cell.entity = entity;
                 cell.isDirty = false;
                 addedEntities.Add(entity);
-                // Console.Error.WriteLine($"Added: ({cell.position.X},{cell.position.Y}): {cell.entity}");
+                Console.Error.WriteLine($"Added: ({cell.position.X},{cell.position.Y}): {cell.entity}");
             }
         }
 
@@ -236,7 +233,7 @@ public class Map
                     cell.entity = null;
                     cell.isDirty = false;
 
-                    // Console.Error.WriteLine($"Removed: ({cell.position.X},{cell.position.Y}): {cell.entity}");
+                    Console.Error.WriteLine($"Removed: ({cell.position.X},{cell.position.Y}): {cell.entity}");
                 }
                 else 
                 {
@@ -573,7 +570,7 @@ public class Navigation : IDisposable
             }
 
             var result = distanceNavDict.FirstOrDefault(kvp => kvp.Key > 1);
-            if (result.Equals(default(KeyValuePair<int, NavigationData>)))
+            if (result.Equals(default(KeyValuePair<int, NavigationData>)) || result.Value.Count < 1)
             {
                 continue;
             }
@@ -640,7 +637,7 @@ public class Navigation : IDisposable
 
         foreach (var protein in proteins)
         {
-            CalculatePathFromOrganToProtein(organ.id, organCell, protein);
+            CalculatePathFromOrganToProtein(organCell, protein);
         }
 
         // in case we dont find any valid paths
@@ -648,7 +645,7 @@ public class Navigation : IDisposable
         return organNavDict[organ.id];
     }
 
-    private void CalculatePathFromOrganToProtein(string id, Cell start, Cell end)
+    private void CalculatePathFromOrganToProtein(Cell start, Cell end)
     {        
         if (!TryGetPath(start, end, out var path))
         {   
@@ -656,8 +653,8 @@ public class Navigation : IDisposable
         }
 
         int distance = path.Count - 1;
-        organNavDict.TryAdd(id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
-        organNavDict[id].TryAdd(distance, new Dictionary<string, NavigationData>());    
+        organNavDict.TryAdd(start.entity.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
+        organNavDict[start.entity.id].TryAdd(distance, new Dictionary<string, NavigationData>());    
         var navData = new NavigationData
         {                
             origin = start,
@@ -666,7 +663,9 @@ public class Navigation : IDisposable
             path = path,
             pathSet = path.ToHashSet(),
         };
-        organNavDict[id][distance].Add(end.entity.id, navData);
+
+        // Console.Error.WriteLine($"Adding {start.entity.id} {distance} {end.entity.id}");
+        organNavDict[start.entity.id][distance].Add(end.entity.id, navData);
         // Console.Error.WriteLine($"Adding navigation data {navData}");
     }
 
@@ -682,6 +681,7 @@ public class Navigation : IDisposable
 
     private void OnEntitiesAdded(IEnumerable<IEntity> entities)
     {
+        var recalculations = new List<Action>();
         foreach (var entity in entities)
         {
             if (entity == null) { continue; }
@@ -691,16 +691,19 @@ public class Navigation : IDisposable
                 for (int j = 0; j < distanceDict.Count; j++)
                 {
                     var distanceKvp = distanceDict.ElementAt(j);
-                    var entityNavDict = distanceKvp.Value;
+                    var entityNavDict = distanceKvp.Value;                    
                     for (int k = 0; k < entityNavDict.Count; k++)
                     {
                         var kvp = entityNavDict.ElementAt(k);
                         var navData = kvp.Value;
                         if (navData.pathSet.Contains(entity.position))
-                        {
-                            entityNavDict.Remove(kvp.Key);
-                            Console.Error.WriteLine($"Addition: Recalculating {navData.origin.entity.id} > {kvp.Key} | {navData}");
-                            CalculatePathFromOrganToProtein(navData.origin.entity.id, navData.origin, navData.target);                          
+                        {                            
+                            recalculations.Add(delegate
+                            {
+                                entityNavDict.Remove(kvp.Key);
+                                Console.Error.WriteLine($"Addition {entity.id}: Recalculating {navData.origin.entity.id} > {kvp.Key}");
+                                CalculatePathFromOrganToProtein(navData.origin, navData.target);
+                            });
                         }
 
                         if (entityNavDict.Count < 1)
@@ -711,10 +714,16 @@ public class Navigation : IDisposable
                 }
             }
         }
+
+        foreach (var recalc in recalculations)
+        {
+            recalc?.Invoke();
+        }
     }
 
     private void OnEntitiesRemoved(IEnumerable<IEntity> entities)
     {
+        var recalculations = new List<Action>();
         foreach (var entity in entities)
         {
             if (entity == null) { continue; }
@@ -735,9 +744,12 @@ public class Navigation : IDisposable
                         var navData = kvp.Value;
                         if (navData.pathSet.Contains(entity.position))
                         {
-                            entityNavDict.Remove(kvp.Key);
-                            Console.Error.WriteLine($"Removal: Recalculating {navData.origin.entity.id} > {kvp.Key} | {navData}");
-                            CalculatePathFromOrganToProtein(navData.origin.entity.id, navData.origin, navData.target);
+                            recalculations.Add(delegate
+                            {
+                                entityNavDict.Remove(kvp.Key);
+                                Console.Error.WriteLine($"Removal {entity.id}: Recalculating {navData.origin.entity.id} > {kvp.Key} | {navData}");
+                                CalculatePathFromOrganToProtein(navData.origin, navData.target);
+                            });
                         }
                     }
 
@@ -747,6 +759,11 @@ public class Navigation : IDisposable
                     }
                 }
             }
+        }
+
+        foreach (var recalc in recalculations)
+        {
+            recalc?.Invoke();
         }
     }    
 
