@@ -1,0 +1,540 @@
+using System;
+using System.Linq;
+using System.IO;
+using System.Text;
+using System.Collections;
+using System.Collections.Generic;
+using System.Numerics;
+
+class Player
+{
+    static void Main(string[] args)
+    {
+        string[] inputs;
+        inputs = Console.ReadLine().Split(' ');
+        int width = int.Parse(inputs[0]);
+        int height = int.Parse(inputs[1]);
+
+        Map map = new Map(width, height);
+        List<Protein> proteins = new List<Protein>();
+        List<Organ> organs = new List<Organ>();
+        List<Wall> walls = new List<Wall>();
+        List<Organism> organisms = new List<Organism>();
+
+        ProteinReserve playerProteins = new ProteinReserve();
+        ProteinReserve opponentProteins = new ProteinReserve();
+
+        while (true)
+        {
+            // New Round
+            map.SetDirty();
+
+            int entityCount = int.Parse(Console.ReadLine());
+            for (int i = 0; i < entityCount; i++)
+            {
+                inputs = Console.ReadLine().Split(' ');
+                int x = int.Parse(inputs[0]);
+                int y = int.Parse(inputs[1]);
+                string type = inputs[2];
+                int owner = int.Parse(inputs[3]);
+                int organId = int.Parse(inputs[4]);
+                string organDir = inputs[5];
+                int organParentId = int.Parse(inputs[6]);
+                int organRootId = int.Parse(inputs[7]);
+
+                if (Enum.TryParse(type, true, out ProteinType pt))
+                {
+                    proteins.Add(new Protein
+                    {
+                        id = $"protein_{x}_{y}",
+                        type = pt,
+                        position = new Vector2(x, y),
+                    });
+                }
+
+                if (Enum.TryParse(type, true, out OrganType ot))
+                {
+                    if (ot == OrganType.Wall)
+                    {
+                        walls.Add(new Wall
+                        {
+                            id = $"wall_{x}_{y}",
+                            position = new Vector2(x, y),
+                        });
+
+                        continue;
+                    }
+
+                    var parentOrganism = organisms.FirstOrDefault(x => x.id == organRootId);
+                    if (parentOrganism == null)
+                    {
+                        parentOrganism = new Organism
+                        {
+                            id = organRootId,
+                            proteins = owner == 1 
+                                ? playerProteins 
+                                : opponentProteins,
+                            map = map,
+                        };
+
+                        organisms.Add(parentOrganism);
+                    }
+
+                    var organ = new Organ
+                    {
+                        id = $"organ_{organId}",
+                        organId = organId,
+                        type = ot,
+                        position = new Vector2(x, y),
+                        isPlayerOwned = owner == 1,
+                    };
+
+                    organs.Add(organ);
+                    parentOrganism.AddOrgan(organ);
+                }
+            }
+
+            inputs = Console.ReadLine().Split(' ');
+            playerProteins.a = int.Parse(inputs[0]);
+            playerProteins.b = int.Parse(inputs[1]);
+            playerProteins.c = int.Parse(inputs[2]);
+            playerProteins.d = int.Parse(inputs[3]);
+
+            inputs = Console.ReadLine().Split(' ');
+            opponentProteins.a = int.Parse(inputs[0]);
+            opponentProteins.b = int.Parse(inputs[1]);
+            opponentProteins.c = int.Parse(inputs[2]);
+            opponentProteins.d = int.Parse(inputs[3]);
+
+            var entities = new List<IEntity>();
+            entities.AddRange(proteins.Cast<IEntity>());
+            entities.AddRange(walls.Cast<IEntity>());
+            entities.AddRange(organs.Cast<IEntity>());
+            map.SetEntities(entities);
+
+            var playerOrganisms = organisms.Where(x => x.isPlayerOwned).ToArray();
+            int requiredActionsCount = int.Parse(Console.ReadLine());
+            for (int i = 0; i < requiredActionsCount; i++)
+            {
+                Organism organism = playerOrganisms[i];
+                organism.CollectClosestProtein();
+            }
+        }
+    }
+}
+
+public class Map
+{
+    private Cell[,] cells;
+
+    public Map(int width, int height)
+    {
+        cells = new Cell[width, height];
+        for (int x = 0; x < width; x++)
+        {            
+            for (int y = 0; y < height; y++)
+            {
+                cells[x,y] = new Cell
+                {
+                    position = new Vector2(x, y),
+                    entity = null,
+                    isDirty = true,
+                };
+            }
+        }
+    }
+
+    public void SetDirty()
+    {
+        foreach (var cell in cells)
+        {
+            cell.isDirty = true;
+        }
+    }
+
+    public void SetEntities(IEnumerable<IEntity> entities)
+    {
+        foreach (var entity in entities)
+        {
+            Cell cell = GetCellAtEntityPosition(entity);
+            if (cell.entity?.id == entity.id)
+            {
+                // still the same entity as last turn
+                cell.isDirty = false;    
+
+                // Console.Error.WriteLine($"No Change: ({cell.position.X},{cell.position.Y}): {cell.entity}");            
+            }
+            else 
+            {
+                // entity was added to cell
+                cell.entity = entity;
+                cell.isDirty = false;
+
+                // Console.Error.WriteLine($"Added: ({cell.position.X},{cell.position.Y}): {cell.entity}");
+            }
+        }
+
+        foreach (var cell in cells)
+        {
+            if (cell.isDirty)
+            {
+                if (cell.entity != null)
+                {
+                    // entity was removed from cell
+                    cell.entity = null;
+                    cell.isDirty = false;
+
+                    // Console.Error.WriteLine($"Removed: ({cell.position.X},{cell.position.Y}): {cell.entity}");
+                }
+                else 
+                {
+                    // empty cell
+                    cell.isDirty = false;
+
+                    // Console.Error.WriteLine($"Empty: ({cell.position.X},{cell.position.Y}): {cell.entity}");
+                }
+            }
+
+            // Console.Error.WriteLine($"({cell.position.X},{cell.position.Y}): {cell.entity}");
+        }
+    }
+
+    public Cell GetCellAtEntityPosition(IEntity entity)    
+    {
+        return cells[(int)entity.position.X, (int)entity.position.Y];
+    }
+
+    public int Distance(Vector2 a, Vector2 b)
+    {
+        return Math.Abs((int)b.X - (int)a.X) + Math.Abs((int)b.Y - (int)a.Y);
+    }
+
+    public static string GetDirectionKey(Vector2 dir)
+    {
+        return movementDirections.FirstOrDefault(x => x.Value == dir).Key;
+    }
+
+    public Cell FindNearestProteinBFS(Cell start, HashSet<Cell> exceptions = null)
+    {
+        int rows = cells.GetLength(0);
+        int cols = cells.GetLength(1);
+
+        var queue = new Queue<Cell>();
+        var visited = new HashSet<Cell>();
+        exceptions ??= new HashSet<Cell>();
+
+        queue.Enqueue(start);
+        visited.Add(start);
+
+        while (queue.Count > 0)
+        {
+            Cell current = queue.Dequeue();
+
+            // Check if it's a protein and not already targeted
+            if (current.entity is Protein && !exceptions.Contains(current))
+            {
+                return current;
+            }
+
+            // Explore neighbors
+            foreach (Cell neighbor in GetNeighbors(cells, current, rows, cols))
+            {
+                if (!visited.Contains(neighbor) && (neighbor.entity == null || !neighbor.entity.isObstacle))
+                {
+                    visited.Add(neighbor);
+                    queue.Enqueue(neighbor);
+                }
+            }
+        }
+
+        // No protein found
+        return null;
+    }
+
+    private static IEnumerable<Cell> GetNeighbors(Cell[,] board, Cell cell, int rows, int cols)
+    {
+        var directions = new (int dx, int dy)[] 
+        { 
+            (0, 1),
+            (1, 0),
+            (0, -1),
+            (-1, 0),
+        };
+
+        foreach (var (dx, dy) in directions)
+        {
+            int newX = (int)cell.position.X + dx;
+            int newY = (int)cell.position.Y + dy;
+
+            if (newX >= 0 && newX < rows && newY >= 0 && newY < cols)
+            {
+                yield return board[newX, newY];
+            }
+        }
+    }
+}
+
+public class Cell
+{
+    public Vector2 position;
+    public IEntity entity;
+    public bool isDirty;
+
+    public override string ToString()
+    {
+        return $"({position.X},{position.Y}): {entity}";
+    }
+}
+
+public class Organism
+{
+    public int id;
+    public Organ root;
+    public List<Organ> organs = new List<Organ>();
+    public ProteinReserve proteins;
+    public Map map;
+    public int actions = 1;
+
+    public bool isPlayerOwned => root.isPlayerOwned;
+
+    public void AddOrgan(Organ organ)
+    {
+        this.organs.Add(organ);
+        if (organ.type == OrganType.Root)
+        {
+            root = organ;
+        }
+    }
+
+    public void CollectClosestProtein()
+    {
+        Cell closest = null;
+        Organ target = default;
+        int closestDistance = 999;
+        foreach (Organ organ in organs)
+        {
+            Cell cell = map.GetCellAtEntityPosition(organ);
+            Cell protein = map.FindNearestProteinBFS(cell);
+            if (protein == null)
+            {
+                continue;
+            }
+
+            int distance = map.Distance(cell.position, protein.position);
+            if (distance < closestDistance)
+            {
+                closest = protein;
+                target = organ;
+                closestDistance = distance;
+            }
+        }
+
+        if (closest != null)
+        {
+            Console.Error.WriteLine($"Closest Protein: {closest}");
+            if (closestDistance == 2 && TryGrowHarvester(target, closest.position, dir))
+            {
+                
+            }
+            else
+            {
+
+            }            
+        }
+        else
+        {
+            Console.WriteLine("WAIT");
+        }
+    }
+
+    public bool TryGrowBasic(Organ organ, Vector2 destination)
+    {
+        return Grow(organ, OrganType.Basic, destination, "N");
+    }
+
+    public bool TryGrowHarvester(Organ organ, Vector2 destination, string direction)
+    {
+        return Grow(organ, OrganType.Harvester, destination, direction);
+    }
+
+    public bool TryGrowTentacle(Organ organ, Vector2 destination, string direction)
+    {
+        return Grow(organ, OrganType.Tentacle, destination, direction);
+    }
+
+    public bool TryGrowSporer(Organ organ, Vector2 destination, string direction)
+    {
+        return Grow(organ, OrganType.Sporer, destination, direction);        
+    }
+
+    public bool TryGrowAny(Organ organ, Vector2 destination)
+    {
+        if (TryGrowBasic(organ, destination) 
+            || TryGrowHarvester(organ, destination, "N")
+            || TryGrowTentacle(organ, destination, "N")
+            || TryGrowSporer(organ, destination, "N"))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    public bool CanGrow(OrganType organType)
+    {
+        switch(organType)
+        {
+            case OrganType.Basic:
+                return proteins.a >= 1;
+            case OrganType.Harvester:
+                return proteins.c >= 1 && proteins.d >= 1;
+            case OrganType.Tentacle:
+                return proteins.b >= 1 && proteins.c >= 1;
+            case OrganType.Sporer:
+                return proteins.b >= 1 && proteins.d >= 1;
+        }
+
+        return false;
+    }
+
+    public bool CanSpore(Organ organ)
+    {
+        return organ.type == OrganType.Sporer
+            && proteins.a > 0
+            && proteins.b > 0
+            && proteins.c > 0
+            && proteins.d > 0;
+    }
+
+    private bool Grow(Organ organ, OrganType growthType, Vector2 destination, string direction)
+    {
+        if (!CanGrow(growthType))
+        {        
+            return false;
+        }
+        
+        PayGrowthCosts(growthType);
+        Console.Error.WriteLine($"Organ {organ.organId} (organism {id}) is growing a {growthType} from {organ.position} to {destination} facing {direction}");
+        Console.WriteLine($"GROW {organ.organId} {destination.X} {destination.Y} {growthType.ToString().ToUpper()} {direction}");
+        return true;
+    }
+
+    public bool Spore(Organ organ, Vector2 destination)
+    {
+        if (!CanSpore(organ))
+        {
+            return false;
+        }
+
+        PaySporeCosts();
+        Console.Error.WriteLine($"Organ {organ.id} (organism {id}) is sporing a root from {organ.position} to {destination}");
+        Console.WriteLine($"SPORE {organ.id} {destination.X} {destination.Y}");        
+        return true;
+    }
+
+    private void PayGrowthCosts(OrganType organType)
+    {
+        switch(organType)
+        {
+            case OrganType.Basic:
+                proteins.a--;
+                break;
+            case OrganType.Harvester:
+                proteins.c--;
+                proteins.d--;
+                 break;
+            case OrganType.Tentacle:
+                proteins.b--;
+                proteins.c--;
+                break;
+            case OrganType.Sporer:
+                proteins.b--;
+                proteins.d--;
+                break;
+        }
+
+        actions--;
+    }
+
+    private void PaySporeCosts()
+    {
+        proteins.a--;
+        proteins.b--;
+        proteins.c--;
+        proteins.d--;
+        actions--;
+    }
+}
+
+public struct Organ : IEntity
+{
+    public string id { get; set; }
+    public int organId { get; set; }
+    public OrganType type { get; set; }
+    public Vector2 position { get; set; }
+    public bool isPlayerOwned { get; set; }
+    public bool isObstacle => true;
+
+    public override string ToString()
+    {
+        return $"Organ {type} ({(isPlayerOwned ? "Player" : "Opponent")})";
+    }
+}
+
+public struct Protein : IEntity
+{
+    public string id { get; set; }
+    public ProteinType type { get; set; }
+    public Vector2 position { get; set; }
+    public bool isObstacle => false;
+
+    public override string ToString()
+    {
+        return $"Protein {type}";
+    }
+}
+
+public struct Wall : IEntity
+{
+    public string id { get; set; }
+    public Vector2 position { get; set; }
+    public bool isObstacle => true;    
+
+    public override string ToString()
+    {
+        return $"Wall";
+    }
+}
+
+public interface IEntity
+{
+    string id { get; }
+    Vector2 position { get; }
+    bool isObstacle { get; }
+}
+
+public class ProteinReserve
+{
+    public int a;
+    public int b;
+    public int c;
+    public int d;
+}
+
+public enum OrganType
+{
+    Wall,
+    Root,
+    Basic,
+    Tentacle,
+    Harvester,
+    Sporer
+}
+
+public enum ProteinType
+{
+    A,
+    B,
+    C,
+    D
+}
