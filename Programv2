@@ -412,9 +412,11 @@ public class Navigation
     private struct NavigationData
     {
         public Organ organ;
+        public Cell origin;
         public Cell target;
         public int distance;
-        public List<Vector2> path;       
+        public List<Vector2> path;      
+        public HashSet<Vector2> pathSet; 
     }
 
     private Map map;
@@ -434,16 +436,29 @@ public class Navigation
     {
         for (int i = 0; i < organNavDict.Count; i++)
         {
-            var distanceData = organNavDict.ElementAt(i);
-            for (int j = 0; j < distanceData.Value.Count; j++)
+           var distanceDict = organNavDict.ElementAt(i).Value;
+            for (int j = 0; j < distanceDict.Count; j++)
             {
-                
+                 var entityNavDict = distanceDict.ElementAt(j).Value;
+                for (int k = 0; k < entityNavDict.Count; k++)
+                {
+                    var kvp = entityNavDict.ElementAt(k);
+                    var navData = kvp.Value;
+                    if (navData.pathSet.Contains(entity.position))
+                    {
+                        navData.path = GetPath(navData.origin, navData.target);
+                        navData.pathSet = navData.path.ToHashSet();
+                        entityNavDict[kvp.Key] = navData;
+                    }
+                }
             }
         }
     }
 
     public void OnEntityRemoved(IEntity entity)
     {
+        if (entity == null) { return; }
+
         organNavDict.Remove(entity.id);
         for (int i = 0; i < organNavDict.Count; i++)
         {
@@ -452,6 +467,19 @@ public class Navigation
             {
                 int distanceKey = distanceDict.ElementAt(j).Key;
                 var entityNavDict = distanceDict.ElementAt(j).Value;
+                entityNavDict.Remove(entity.id);
+
+                for (int k = 0; k < entityNavDict.Count; k++)
+                {
+                    var kvp = entityNavDict.ElementAt(k);
+                    var navData = kvp.Value;
+                    if (navData.pathSet.Contains(entity.position))
+                    {
+                        navData.path = GetPath(navData.origin, navData.target);
+                        navData.pathSet = navData.path.ToHashSet();
+                        entityNavDict[kvp.Key] = navData;
+                    }
+                }
                 
                 if (entityNavDict.Count < 1)
                 {
@@ -459,6 +487,11 @@ public class Navigation
                 }
             }
         }
+    }
+
+    private List<Vector2> GetPath(Cell start, Cell end)
+    {
+        return new List<Vector2>();
     }
 
     private SortedDictionary<int, Dictionary<string, NavigationData>> FindPathsToProteins(Organ organ)
@@ -469,12 +502,16 @@ public class Navigation
 
         organNavDict.TryAdd(organ.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
         organNavDict[organ.id].TryAdd(distance, new Dictionary<string, NavigationData>());
+
+        var path = GetPath(organCell, proteinCell);
         organNavDict[organ.id][distance].Add(proteinCell.entity.id, new NavigationData
         {
             organ = organ,
+            origin = organCell,
             target = proteinCell,
             distance = distance,
-            path = new List<Vector2>(),
+            path = path,
+            pathSet = path.ToHashSet(),
         });
 
         return organNavDict[organ.id];
