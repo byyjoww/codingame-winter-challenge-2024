@@ -682,34 +682,34 @@ public class Navigation : IDisposable
     private void OnEntitiesAdded(IEnumerable<IEntity> entities)
     {
         var recalculations = new List<Action>();
-        foreach (var entity in entities)
-        {
-            if (entity == null) { continue; }
-            for (int i = 0; i < organNavDict.Count; i++)
-            {
-                var distanceDict = organNavDict.ElementAt(i).Value;
-                for (int j = 0; j < distanceDict.Count; j++)
-                {
-                    var distanceKvp = distanceDict.ElementAt(j);
-                    var entityNavDict = distanceKvp.Value;                    
-                    for (int k = 0; k < entityNavDict.Count; k++)
-                    {
-                        var kvp = entityNavDict.ElementAt(k);
-                        var navData = kvp.Value;
-                        if (navData.pathSet.Contains(entity.position))
-                        {                            
-                            recalculations.Add(delegate
-                            {
-                                entityNavDict.Remove(kvp.Key);
-                                Console.Error.WriteLine($"Addition {entity.id}: Recalculating {navData.origin.entity.id} > {kvp.Key}");
-                                CalculatePathFromOrganToProtein(navData.origin, navData.target);
-                            });
-                        }
+        var entityPositions = entities
+            .Select(x => x.position)
+            .ToHashSet();
 
-                        if (entityNavDict.Count < 1)
+        for (int i = 0; i < organNavDict.Count; i++)
+        {
+            var distanceDict = organNavDict.ElementAt(i).Value;
+            for (int j = 0; j < distanceDict.Count; j++)
+            {
+                var distanceKvp = distanceDict.ElementAt(j);
+                var entityNavDict = distanceKvp.Value;
+                for (int k = 0; k < entityNavDict.Count; k++)
+                {
+                    var kvp = entityNavDict.ElementAt(k);
+                    var navData = kvp.Value;
+                    if (navData.pathSet.Overlaps(entityPositions))
+                    {
+                        recalculations.Add(delegate
                         {
-                            distanceDict.Remove(distanceKvp.Key);
-                        }
+                            entityNavDict.Remove(kvp.Key);
+                            Console.Error.WriteLine($"Addition: Recalculating {navData.origin.entity.id} > {kvp.Key}");
+                            CalculatePathFromOrganToProtein(navData.origin, navData.target);
+                        });
+                    }
+
+                    if (entityNavDict.Count < 1)
+                    {
+                        distanceDict.Remove(distanceKvp.Key);
                     }
                 }
             }
@@ -724,39 +724,46 @@ public class Navigation : IDisposable
     private void OnEntitiesRemoved(IEnumerable<IEntity> entities)
     {
         var recalculations = new List<Action>();
+        var entityPositions = entities
+            .Select(x => x.position)
+            .ToHashSet();
+        
         foreach (var entity in entities)
         {
-            if (entity == null) { continue; }
-
             organNavDict.Remove(entity.id);
-            for (int i = 0; i < organNavDict.Count; i++)
+        }
+        
+        for (int i = 0; i < organNavDict.Count; i++)
+        {
+            var distanceDict = organNavDict.ElementAt(i).Value;
+            for (int j = 0; j < distanceDict.Count; j++)
             {
-                var distanceDict = organNavDict.ElementAt(i).Value;
-                for (int j = 0; j < distanceDict.Count; j++)
+                var distanceKvp = distanceDict.ElementAt(j);
+                var entityNavDict = distanceKvp.Value;
+
+                foreach (var entity in entities)
                 {
-                    var distanceKvp = distanceDict.ElementAt(j);
-                    var entityNavDict = distanceKvp.Value;
                     entityNavDict.Remove(entity.id);
+                }                
 
-                    for (int k = 0; k < entityNavDict.Count; k++)
+                for (int k = 0; k < entityNavDict.Count; k++)
+                {
+                    var kvp = entityNavDict.ElementAt(k);
+                    var navData = kvp.Value;
+                    if (navData.pathSet.Overlaps(entityPositions))
                     {
-                        var kvp = entityNavDict.ElementAt(k);
-                        var navData = kvp.Value;
-                        if (navData.pathSet.Contains(entity.position))
+                        recalculations.Add(delegate
                         {
-                            recalculations.Add(delegate
-                            {
-                                entityNavDict.Remove(kvp.Key);
-                                Console.Error.WriteLine($"Removal {entity.id}: Recalculating {navData.origin.entity.id} > {kvp.Key} | {navData}");
-                                CalculatePathFromOrganToProtein(navData.origin, navData.target);
-                            });
-                        }
+                            entityNavDict.Remove(kvp.Key);
+                            Console.Error.WriteLine($"Removal: Recalculating {navData.origin.entity.id} > {kvp.Key}");
+                            CalculatePathFromOrganToProtein(navData.origin, navData.target);
+                        });
                     }
+                }
 
-                    if (entityNavDict.Count < 1)
-                    {
-                        distanceDict.Remove(distanceKvp.Key);
-                    }
+                if (entityNavDict.Count < 1)
+                {
+                    distanceDict.Remove(distanceKvp.Key);
                 }
             }
         }
