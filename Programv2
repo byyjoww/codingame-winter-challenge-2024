@@ -414,26 +414,62 @@ public class Navigation
         public Organ organ;
         public Cell target;
         public int distance;
-        public List<Vector2> path;
+        public List<Vector2> path;       
     }
 
     private Map map;
-    private Dictionary<string, SortedDictionary<int, NavigationData>> proteinData;    
+
+    // first string is organId
+    // first integer is distance between organ and entity
+    // second string is entityId
+    private Dictionary<string, SortedDictionary<int, Dictionary<string, NavigationData>>> organNavDict;    
 
     public Navigation(Map map)
     {
         this.map = map;
-        proteinData = new Dictionary<string, SortedDictionary<int, NavigationData>>();
+        organNavDict = new Dictionary<string, SortedDictionary<int, Dictionary<string, NavigationData>>>();
     }
 
-    private SortedDictionary<int, NavigationData> FindPathsToProteins(Organ organ)
+    public void OnEntityAdded(IEntity entity)
+    {
+        for (int i = 0; i < organNavDict.Count; i++)
+        {
+            var distanceData = organNavDict.ElementAt(i);
+            for (int j = 0; j < distanceData.Value.Count; j++)
+            {
+                
+            }
+        }
+    }
+
+    public void OnEntityRemoved(IEntity entity)
+    {
+        organNavDict.Remove(entity.id);
+        for (int i = 0; i < organNavDict.Count; i++)
+        {
+            var distanceDict = organNavDict.ElementAt(i).Value;
+            for (int j = 0; j < distanceDict.Count; j++)
+            {
+                int distanceKey = distanceDict.ElementAt(j).Key;
+                var entityNavDict = distanceDict.ElementAt(j).Value;
+                
+                if (entityNavDict.Count < 1)
+                {
+                    distanceDict.Remove(distanceKey);
+                }
+            }
+        }
+    }
+
+    private SortedDictionary<int, Dictionary<string, NavigationData>> FindPathsToProteins(Organ organ)
     {
         Cell organCell = map.GetCellAtEntityPosition(organ);
         Cell proteinCell = FindNearestProteinBFS(organCell);
         int distance = Map.Distance(organCell.position, proteinCell.position);
 
-        proteinData.TryAdd(organ.id, new SortedDictionary<int, NavigationData>());
-        proteinData[organ.id].Add(distance, new NavigationData
+        organNavDict.TryAdd(organ.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
+        organNavDict[organ.id].TryAdd(distance, new Dictionary<string, NavigationData>());
+        organNavDict[organ.id][distance].Add(proteinCell.entity.id, new NavigationData
         {
             organ = organ,
             target = proteinCell,
@@ -441,7 +477,7 @@ public class Navigation
             path = new List<Vector2>(),
         });
 
-        return proteinData[organ.id];
+        return organNavDict[organ.id];
     }
 
     public bool TryFindNearestProtein(Organism organism, out Organ start, out Protein end, out int closestDistance)
@@ -452,23 +488,29 @@ public class Navigation
         closestDistance = 999;
         foreach (Organ organ in organism.organs)
         {
-            if (!proteinData.TryGetValue(organ.id, out var navDict))
+            if (!organNavDict.TryGetValue(organ.id, out var distanceNavDict))
             {
-                navDict = FindPathsToProteins(organ);
+                distanceNavDict = FindPathsToProteins(organ);
             }
 
-            if (navDict.Count < 1)
+            if (distanceNavDict.Count < 1)
             {
                 continue;
             }
 
-            var first = navDict.First().Value;
-            if (first.distance < closestDistance)
+            var entityNavDict = distanceNavDict.First().Value;
+            if (entityNavDict.Count < 1)
+            {
+                continue;
+            }
+
+            var navData = entityNavDict.First().Value;
+            if (navData.distance < closestDistance)
             {                
                 start = organ;
-                end = (Protein)first.target.entity;
-                closest = first.target;
-                closestDistance = first.distance;
+                end = (Protein)navData.target.entity;
+                closest = navData.target;
+                closestDistance = navData.distance;
             }
         }
 
