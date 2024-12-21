@@ -646,7 +646,7 @@ public class Navigation : IDisposable
             {                
                 origin = organCell,
                 target = protein,
-                distance = distance,
+                distance = path.Count - 1,
                 path = path,
                 pathSet = path.ToHashSet(),
             });
@@ -687,6 +687,7 @@ public class Navigation : IDisposable
                         {
                             if (TryGetPath(navData.origin, navData.target, out var path))
                             {
+                                navData.distance = path.Count - 1;
                                 navData.path = path;
                                 navData.pathSet = navData.path.ToHashSet();
                                 entityNavDict[kvp.Key] = navData;
@@ -731,6 +732,7 @@ public class Navigation : IDisposable
                         {
                             if (TryGetPath(navData.origin, navData.target, out var path))
                             {
+                                navData.distance = path.Count - 1;
                                 navData.path = path;
                                 navData.pathSet = navData.path.ToHashSet();
                                 entityNavDict[kvp.Key] = navData;
@@ -831,7 +833,7 @@ public class AStar : IPathfinder
 
             // If we've reached the target, reconstruct the path
             if (currentNode.Cell == end)
-            {
+            {                
                 return ReconstructPath(currentNode);
             }
 
@@ -883,8 +885,11 @@ public class AStar : IPathfinder
 
     private int GetMovementCost(Cell from, Cell to)
     {
-        if (to.entity == null) { return 1; }
-        if (to.entity is Protein) { return 15; }
+        if (to.entity != null && to.entity is Protein)
+        {
+            return 15;
+        }
+
         return 1;
     }
 
