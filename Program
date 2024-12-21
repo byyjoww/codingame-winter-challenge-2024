@@ -222,7 +222,7 @@ public class Map
                 cell.entity = entity;
                 cell.isDirty = false;
                 addedEntities.Add(entity);
-                Console.Error.WriteLine($"Added: ({cell.position.X},{cell.position.Y}): {cell.entity}");
+                // Console.Error.WriteLine($"Added: ({cell.position.X},{cell.position.Y}): {cell.entity}");
             }
         }
 
@@ -238,7 +238,7 @@ public class Map
                     cell.entity = null;
                     cell.isDirty = false;
 
-                    Console.Error.WriteLine($"Removed: ({cell.position.X},{cell.position.Y}): {prev}");
+                    // Console.Error.WriteLine($"Removed: ({cell.position.X},{cell.position.Y}): {prev}");
                 }
                 else
                 {
@@ -366,7 +366,7 @@ public class Organism
         };
 
         desired.ExceptWith(map.Harvested.Select(x => ((Protein)x.entity).type));
-        if (navigation.TryFindNearestProtein(this, desired, out Navigation.NavigationData navData))
+        if (navigation.TryFindNearestProtein(this, desired, 1, out Navigation.NavigationData navData))
         {
             Organ organ = (Organ)navData.origin.entity;
             Cell protein = navData.target;
@@ -374,7 +374,7 @@ public class Organism
             Console.Error.WriteLine($"Closest protein to {organ} is {protein.entity} | Distance: {navData.distance} | Path: [{string.Join(", ", navData.path)}]");
             if (navData.distance == 2 && CanGrow(OrganType.Harvester))
             {
-                Vector2 harvesterPos = navData.path[navData.path.Count - 2];
+                Vector2 harvesterPos = navData.path[0];
                 Vector2 harvesterDir = Vector2.Normalize(protein.position - harvesterPos);
                 string dirKey = Map.GetDirectionKey(harvesterDir);
                 // Console.Error.WriteLine($"{harvesterPos} | {harvesterDir} | {dirKey}");
@@ -386,7 +386,7 @@ public class Organism
             }
             else
             {
-                if (TryGrowAny(organ, navData.path[1]))
+                if (TryGrowAny(organ, navData.path[0]))
                 {
                     return;
                 }
@@ -394,7 +394,7 @@ public class Organism
 
             if (navData.distance > 2)
             {
-                if (TryGrowAny(organ, navData.path[1]))
+                if (TryGrowAny(organ, navData.path[0]))
                 {
                     return;
                 }
@@ -561,7 +561,7 @@ public class Navigation
         OnProteinsHarvested(map.OnProteinsHarvested);
     }
 
-    public bool TryFindNearestProtein(Organism organism, HashSet<ProteinType> types, out NavigationData data)
+    public bool TryFindNearestProtein(Organism organism, HashSet<ProteinType> types, int minDistance, out NavigationData data)
     {
         data = default;
         Cell closest = null;
@@ -582,8 +582,8 @@ public class Navigation
 
             bool requiresType = types != null && types.Count > 0;
             var result = distanceNavDict
-                .FirstOrDefault(x => x.Key > 1 
-                    && !requiresType || x.Value.Any(y => y.Value.target.entity is Protein pEntity && types.Contains(pEntity.type)));
+                .FirstOrDefault(x => x.Key > minDistance 
+                    && (!requiresType || x.Value.Any(y => y.Value.target.entity is Protein pEntity && types.Contains(pEntity.type))));
             if (result.Equals(default(KeyValuePair<int, NavigationData>)) || result.Value == null || result.Value.Count < 1)
             {
                 continue;
@@ -666,7 +666,7 @@ public class Navigation
             return;
         }
 
-        int distance = path.Count - 1;
+        int distance = path.Count;
         organNavDict.TryAdd(start.entity.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
         organNavDict[start.entity.id].TryAdd(distance, new Dictionary<string, NavigationData>());
         var navData = new NavigationData
@@ -678,9 +678,7 @@ public class Navigation
             pathSet = path.ToHashSet(),
         };
 
-        // Console.Error.WriteLine($"Adding {start.entity.id} {distance} {end.entity.id}");
         organNavDict[start.entity.id][distance].Add(end.entity.id, navData);
-        // Console.Error.WriteLine($"Adding navigation data {navData}");
     }
 
     private bool TryGetPath(Cell start, Cell end, out List<Vector2> path)
@@ -898,9 +896,14 @@ public class AStar : IPathfinder
         var path = new List<Cell>();
         while (node != null)
         {
-            path.Add(node.Cell);
+            if (node.Parent != null)
+            {
+                path.Add(node.Cell);
+            }
+            
             node = node.Parent;
         }
+
         path.Reverse();
         return path;
     }
@@ -949,7 +952,7 @@ public struct Protein : IEntity
     public ProteinType type { get; set; }
     public Vector2 position { get; set; }
     public bool isHarvested { get; set; }
-    public bool isObstacle => true;
+    public bool isObstacle => isHarvested;
 
     public override string ToString()
     {
