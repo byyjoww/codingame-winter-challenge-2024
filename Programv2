@@ -149,9 +149,9 @@ public class Map
     public Cell[,] Cells => cells;
     public HashSet<Cell> Harvested => harvested;
 
-    public event Action<List<IEntity>> OnEntitiesAdded;
-    public event Action<List<IEntity>> OnEntitiesRemoved;
-    public event Action<HashSet<string>> OnProteinsHarvested;
+    public List<IEntity> OnEntitiesAdded;
+    public List<IEntity> OnEntitiesRemoved;
+    public HashSet<string> OnProteinsHarvested;
 
     private static Dictionary<string, Vector2> movementDirections = new Dictionary<string, Vector2>
     {
@@ -199,6 +199,7 @@ public class Map
     {
         var addedEntities = new List<IEntity>();
         var removedEntities = new List<IEntity>();
+        var harvestedIds = new HashSet<string>();
 
         foreach (var cell in cells)
         {
@@ -232,11 +233,12 @@ public class Map
                 if (cell.entity != null)
                 {
                     // entity was removed from cell
-                    removedEntities.Add(cell.entity);
+                    var prev = cell.entity;
+                    removedEntities.Add(prev);
                     cell.entity = null;
                     cell.isDirty = false;
 
-                    Console.Error.WriteLine($"Removed: ({cell.position.X},{cell.position.Y}): {cell.entity}");
+                    Console.Error.WriteLine($"Removed: ({cell.position.X},{cell.position.Y}): {prev}");
                 }
                 else
                 {
@@ -247,8 +249,7 @@ public class Map
                 }
             }
         }
-
-        HashSet<string> harvestedIds = new HashSet<string>();
+       
         for (int x = 0; x < width; x++)
         {
             for (int y = 0; y < height; y++)
@@ -269,20 +270,9 @@ public class Map
         }
 
         harvested.RemoveWhere(x => !(x.entity is Protein));
-        if (addedEntities.Count > 0)
-        {
-            OnEntitiesAdded?.Invoke(addedEntities);
-        }
-
-        if (removedEntities.Count > 0)
-        {
-            OnEntitiesRemoved?.Invoke(removedEntities);
-        }
-
-        if (harvestedIds.Count > 0)
-        {
-            OnProteinsHarvested?.Invoke(harvestedIds);
-        }
+        OnEntitiesAdded = addedEntities;
+        OnEntitiesRemoved = removedEntities;
+        OnProteinsHarvested = harvestedIds;
     }
 
     public Cell GetCellAtEntityPosition(IEntity entity)
@@ -365,6 +355,8 @@ public class Organism
 
     public void CollectClosestProtein()
     {
+        navigation.Refresh();
+
         HashSet<ProteinType> desired = new HashSet<ProteinType>()
         {
             ProteinType.A,
@@ -531,7 +523,7 @@ public class Organism
     }
 }
 
-public class Navigation : IDisposable
+public class Navigation
 {
     public struct NavigationData
     {
@@ -560,10 +552,13 @@ public class Navigation : IDisposable
         this.map = map;
         this.pathfinder = new AStar(map);
         organNavDict = new Dictionary<string, SortedDictionary<int, Dictionary<string, NavigationData>>>();
+    }
 
-        map.OnEntitiesAdded += OnEntitiesAdded;
-        map.OnEntitiesRemoved += OnEntitiesRemoved;
-        map.OnProteinsHarvested += OnProteinsHarvested;
+    public void Refresh()
+    {
+        OnEntitiesAdded(map.OnEntitiesAdded);
+        OnEntitiesRemoved(map.OnEntitiesRemoved);
+        OnProteinsHarvested(map.OnProteinsHarvested);
     }
 
     public bool TryFindNearestProtein(Organism organism, HashSet<ProteinType> types, out NavigationData data)
@@ -576,7 +571,7 @@ public class Navigation : IDisposable
         {
             if (!organNavDict.TryGetValue(organ.id, out var distanceNavDict))
             {
-                Console.Error.WriteLine($"Creating {organ.id}");
+                // Console.Error.WriteLine($"Creating {organ.id}");
                 distanceNavDict = FindPathsToAllProteins(organ);
             }
 
@@ -585,9 +580,10 @@ public class Navigation : IDisposable
                 continue;
             }
 
+            bool requiresType = types != null && types.Count > 0;
             var result = distanceNavDict
                 .FirstOrDefault(x => x.Key > 1 
-                    && types == null || types.Count < 1 || x.Value.Any(y => y.Value.target.entity is Protein pEntity && types.Contains(pEntity.type)));
+                    && !requiresType || x.Value.Any(y => y.Value.target.entity is Protein pEntity && types.Contains(pEntity.type)));
             if (result.Equals(default(KeyValuePair<int, NavigationData>)) || result.Value == null || result.Value.Count < 1)
             {
                 continue;
@@ -665,7 +661,7 @@ public class Navigation : IDisposable
 
     private void CalculatePathFromOrganToProtein(Cell start, Cell end)
     {
-        if (!TryGetPath(start, end, out var path))
+        if (start.entity == null || !TryGetPath(start, end, out var path))
         {
             return;
         }
@@ -811,13 +807,6 @@ public class Navigation : IDisposable
                 }
             }
         }
-    }
-
-    public void Dispose()
-    {
-        map.OnEntitiesAdded -= OnEntitiesAdded;
-        map.OnEntitiesRemoved -= OnEntitiesRemoved;
-        map.OnProteinsHarvested -= OnProteinsHarvested;
     }
 }
 
