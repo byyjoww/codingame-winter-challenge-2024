@@ -384,7 +384,7 @@ public class Organism
             Cell protein = navData.target;
 
             Console.Error.WriteLine($"Closest protein to {organ} is {protein.entity} | Distance: {navData.distance} | Path: [{string.Join(", ", navData.path)}]");
-            if (navData.distance == 2)
+            if (navData.distance == 2 && CanGrow(OrganType.Harvester))
             {
                 Vector2 harvesterPos = navData.path[navData.path.Count - 2];
                 Vector2 harvesterDir = Vector2.Normalize(protein.position - harvesterPos);
@@ -392,6 +392,13 @@ public class Organism
                 // Console.Error.WriteLine($"{harvesterPos} | {harvesterDir} | {dirKey}");
 
                 if (TryGrowHarvester(organ, harvesterPos, dirKey))
+                {
+                    return;
+                }
+            }
+            else
+            {
+                if (TryGrowAny(organ, navData.path[1]))
                 {
                     return;
                 }
@@ -584,7 +591,7 @@ public class Navigation : IDisposable
 
             var result = distanceNavDict
                 .FirstOrDefault(x => x.Key > 1 
-                    && types == null || x.Value.Any(y => types.Contains(((Protein)y.Value.target.entity).type)));
+                    && types == null || types.Count < 1 || x.Value.Any(y => y.Value.target.entity is Protein pEntity && types.Contains(pEntity.type)));
             if (result.Equals(default(KeyValuePair<int, NavigationData>)) || result.Value == null || result.Value.Count < 1)
             {
                 continue;
