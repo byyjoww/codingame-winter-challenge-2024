@@ -127,6 +127,8 @@ class Player
 public class Map
 {
     private Cell[,] cells;
+    private int rows;
+    private int cols;
 
     public Cell[,] Cells => cells;
 
@@ -144,6 +146,8 @@ public class Map
     public Map(int width, int height)
     {
         cells = new Cell[width, height];
+        rows = cells.GetLength(0);
+        cols = cells.GetLength(1);        
         for (int x = 0; x < width; x++)
         {            
             for (int y = 0; y < height; y++)
@@ -154,6 +158,28 @@ public class Map
                     entity = null,
                     isDirty = true,
                 };
+            }
+        }
+    }
+
+    public IEnumerable<Cell> GetNeighbours(Cell cell)
+    {
+        var directions = new (int dx, int dy)[] 
+        { 
+            (0, 1),
+            (1, 0),
+            (0, -1),
+            (-1, 0),
+        };
+
+        foreach (var (dx, dy) in directions)
+        {
+            int newX = (int)cell.position.X + dx;
+            int newY = (int)cell.position.Y + dy;
+
+            if (newX >= 0 && newX < rows && newY >= 0 && newY < cols)
+            {
+                yield return cells[newX, newY];
             }
         }
     }
@@ -455,7 +481,7 @@ public class Navigation : IDisposable
     public Navigation(Map map)
     {
         this.map = map;
-        this.pathfinder = new AStar();
+        this.pathfinder = new AStar(map);
         organNavDict = new Dictionary<string, SortedDictionary<int, Dictionary<string, NavigationData>>>();
 
         map.OnEntitiesAdded += OnEntitiesAdded;
@@ -569,7 +595,7 @@ public class Navigation : IDisposable
             }
 
             // Explore neighbors
-            foreach (Cell neighbor in GetNeighbors(cells, current, rows, cols))
+            foreach (Cell neighbor in map.GetNeighbours(current))
             {
                 if (!visited.Contains(neighbor) && (neighbor.entity == null || !neighbor.entity.isObstacle))
                 {
@@ -665,29 +691,7 @@ public class Navigation : IDisposable
                 }
             }
         }
-    }
-
-    private static IEnumerable<Cell> GetNeighbors(Cell[,] board, Cell cell, int rows, int cols)
-    {
-        var directions = new (int dx, int dy)[] 
-        { 
-            (0, 1),
-            (1, 0),
-            (0, -1),
-            (-1, 0),
-        };
-
-        foreach (var (dx, dy) in directions)
-        {
-            int newX = (int)cell.position.X + dx;
-            int newY = (int)cell.position.Y + dy;
-
-            if (newX >= 0 && newX < rows && newY >= 0 && newY < cols)
-            {
-                yield return board[newX, newY];
-            }
-        }
-    }
+    }    
 }
 
 public interface IPathfinder
@@ -706,13 +710,15 @@ public class AStar : IPathfinder
         public Node Parent { get; set; }
     }
 
+    private Map map = default;
     private PriorityQueue<Node, int> openList;
-    private HashSet<Cell> closedList;
+    private HashSet<Cell> closedList;    
 
-    public AStar()
+    public AStar(Map map)
     {
+        this.map = map;
         openList = new PriorityQueue<Node, int>();
-        closedList = new HashSet<Cell>();
+        closedList = new HashSet<Cell>();        
     }
 
     public List<Cell> GetPath(Cell start, Cell end)
@@ -745,7 +751,7 @@ public class AStar : IPathfinder
 
             closedList.Add(currentNode.Cell);
 
-            foreach (var neighbor in GetNeighbors(currentNode.Cell))
+            foreach (var neighbor in GetNeighbours(currentNode.Cell))
             {
                 if (closedList.Contains(neighbor))
                 {
@@ -796,10 +802,9 @@ public class AStar : IPathfinder
         return 1;
     }
 
-    private List<Cell> GetNeighbors(Cell cell)
+    private IEnumerable<Cell> GetNeighbours(Cell cell)
     {
-        // Return a list of neighboring cells
-        return new List<Cell>();
+        return map.GetNeighbours(cell);
     }
 }
 
