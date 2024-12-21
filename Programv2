@@ -514,7 +514,6 @@ public class Navigation : IDisposable
         Cell closest = null;        
         closestDistance = 999;
 
-        Console.Error.WriteLine(organism.organs.Count);
         foreach (Organ organ in organism.organs)
         {
             if (!organNavDict.TryGetValue(organ.id, out var distanceNavDict))
@@ -769,6 +768,7 @@ public class AStar : IPathfinder
             }
         }
 
+        Console.Error.WriteLine($"[AStar] No path found from {start} to {end}");
         return null; // No path found
     }
 
