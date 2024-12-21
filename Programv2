@@ -323,7 +323,7 @@ public class Organism
                 Vector2 harvesterPos = navData.path[navData.path.Count - 2];
                 Vector2 harvesterDir = Vector2.Normalize(protein.position - harvesterPos);
                 string dirKey = Map.GetDirectionKey(harvesterDir);
-                Console.Error.WriteLine($"{harvesterPos} | {harvesterDir} | {dirKey}");
+                // Console.Error.WriteLine($"{harvesterPos} | {harvesterDir} | {dirKey}");
 
                 if (TryGrowHarvester(organ, harvesterPos, dirKey))
                 {
@@ -333,7 +333,7 @@ public class Organism
 
             if (navData.distance > 2)
             {
-                if (TryGrowAny(organ, protein.position))
+                if (TryGrowAny(organ, navData.path[1]))
                 {
                     return;
                 }
