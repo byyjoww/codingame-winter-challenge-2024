@@ -366,7 +366,15 @@ public class Organism
         };
 
         desired.ExceptWith(map.Harvested.Select(x => ((Protein)x.entity).type));
-        if (navigation.TryFindNearestProtein(this, 1, desired, out Navigation.NavigationData navData))
+        Func<IEntity, bool> isObstacle = (x) =>
+        { 
+            Type t = x.GetType();
+            return t == typeof(Wall) 
+                || t == typeof(Organ) 
+                || t == typeof(Protein) && ((Protein)x).isHarvested; 
+        };
+
+        if (navigation.TryFindNearestProtein(this, 1, isObstacle, desired, out Navigation.NavigationData navData))
         {
             Organ organ = (Organ)navData.origin.entity;
             Cell protein = navData.target;
@@ -552,7 +560,7 @@ public class Navigation
     {
         this.map = map;
         this.pathfinder = new AStar(map);
-        this.isObstacleComparer = (x) => { return x.GetType() == typeof(Wall) || x.GetType() == typeof(Organ); }
+        this.isObstacleComparer = (x) => false;
         organNavDict = new Dictionary<string, SortedDictionary<int, Dictionary<string, NavigationData>>>();
     }
 
@@ -566,7 +574,7 @@ public class Navigation
     public bool TryFindNearestProtein(Organism organism, int minDistance, Func<IEntity, bool> isObstacle, HashSet<ProteinType> types, out NavigationData data)
     {
         this.isObstacleComparer = isObstacle;
-        
+
         data = default;
         Cell closest = null;
         int closestDistance = 999;
@@ -628,7 +636,7 @@ public class Navigation
             && (!requiresType || isOfRequiredType);
     }    
 
-    private SortedDictionary<int, Dictionary<string, NavigationData>> FindPathsToAllProteins(Organ organ, Func<IEntity, bool> isObstacle, HashSet<ProteinType> types = null, bool includeHarvested = false)
+    private SortedDictionary<int, Dictionary<string, NavigationData>> FindPathsToAllProteins(Organ organ, HashSet<ProteinType> types = null, bool includeHarvested = false)
     {
         Cell organCell = map.GetCellAtEntityPosition(organ);
         Cell[] proteins = map.Cells
