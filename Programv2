@@ -75,6 +75,7 @@ class Player
                                 ? playerProteins 
                                 : opponentProteins,
                             map = map,
+                            navigation = new Navigation(map),
                         };
 
                         organisms.Add(parentOrganism);
@@ -126,6 +127,8 @@ class Player
 public class Map
 {
     private Cell[,] cells;
+
+    public Cell[,] Cells => cells;
 
     private static Dictionary<string, Vector2> movementDirections = new Dictionary<string, Vector2>
     {
@@ -212,43 +215,6 @@ public class Map
         return cells[(int)entity.position.X, (int)entity.position.Y];
     }
 
-    public Cell FindNearestProteinBFS(Cell start, HashSet<Cell> exceptions = null)
-    {
-        int rows = cells.GetLength(0);
-        int cols = cells.GetLength(1);
-
-        var queue = new Queue<Cell>();
-        var visited = new HashSet<Cell>();
-        exceptions ??= new HashSet<Cell>();
-
-        queue.Enqueue(start);
-        visited.Add(start);
-
-        while (queue.Count > 0)
-        {
-            Cell current = queue.Dequeue();
-
-            // Check if it's a protein and not already targeted
-            if (current.entity is Protein && !exceptions.Contains(current))
-            {
-                return current;
-            }
-
-            // Explore neighbors
-            foreach (Cell neighbor in GetNeighbors(cells, current, rows, cols))
-            {
-                if (!visited.Contains(neighbor) && (neighbor.entity == null || !neighbor.entity.isObstacle))
-                {
-                    visited.Add(neighbor);
-                    queue.Enqueue(neighbor);
-                }
-            }
-        }
-
-        // No protein found
-        return null;
-    }
-
     public static int Distance(Vector2 a, Vector2 b)
     {
         return Math.Abs((int)b.X - (int)a.X) + Math.Abs((int)b.Y - (int)a.Y);
@@ -257,29 +223,7 @@ public class Map
     public static string GetDirectionKey(Vector2 dir)
     {
         return movementDirections.FirstOrDefault(x => x.Value == dir).Key;
-    }
-
-    private static IEnumerable<Cell> GetNeighbors(Cell[,] board, Cell cell, int rows, int cols)
-    {
-        var directions = new (int dx, int dy)[] 
-        { 
-            (0, 1),
-            (1, 0),
-            (0, -1),
-            (-1, 0),
-        };
-
-        foreach (var (dx, dy) in directions)
-        {
-            int newX = (int)cell.position.X + dx;
-            int newY = (int)cell.position.Y + dy;
-
-            if (newX >= 0 && newX < rows && newY >= 0 && newY < cols)
-            {
-                yield return board[newX, newY];
-            }
-        }
-    }
+    }    
 }
 
 public class Cell
@@ -301,6 +245,7 @@ public class Organism
     public List<Organ> organs = new List<Organ>();
     public ProteinReserve proteins;
     public Map map;
+    public Navigation navigation;
     public int actions = 1;
 
     public bool isPlayerOwned => root.isPlayerOwned;
@@ -316,55 +261,31 @@ public class Organism
 
     public void CollectClosestProtein()
     {
-        Cell closest = null;
-        Organ target = default;
-        int closestDistance = 999;
-        foreach (Organ organ in organs)
+        if (navigation.TryFindNearestProtein(this, out Organ organ, out Protein protein, out int distance))
         {
-            Cell cell = map.GetCellAtEntityPosition(organ);
-            Cell protein = map.FindNearestProteinBFS(cell);
-            if (protein == null)
+            Console.Error.WriteLine($"Closest Protein: {protein} | Distance: {distance}");
+            if (distance == 2)
             {
-                continue;
-            }
+                Vector2 dir = Vector2.Normalize(protein.position - organ.position);
+                string dirKey = Map.GetDirectionKey(dir);
+                Console.Error.WriteLine($"{dir} | {dirKey}");
 
-            int distance = Map.Distance(cell.position, protein.position);
-            if (distance < closestDistance)
-            {
-                closest = protein;
-                target = organ;
-                closestDistance = distance;
-            }
-        }
-
-
-        if (closest != null)
-        {
-            Console.Error.WriteLine($"Closest Protein: {closest}");
-            Vector2 dir = Vector2.Normalize(closest.position - target.position);
-            if (closestDistance == 2)
-            {
-                if (!TryGrowHarvester(target, closest.position, Map.GetDirectionKey(dir)))
+                if (TryGrowHarvester(organ, protein.position, dirKey))
                 {
-                    Console.WriteLine("WAIT");
+                    return;
                 }
             }
-            else if (closestDistance > 2)
+            
+            if (distance > 2)
             {
-                if (!TryGrowAny(target, closest.position))
+                if (TryGrowAny(organ, protein.position))
                 {
-                    Console.WriteLine("WAIT");
+                    return;
                 }
-            }
-            else
-            {
-                Console.WriteLine("WAIT");
-            }
+            }           
         }
-        else
-        {
-            Console.WriteLine("WAIT");
-        }
+        
+        Console.WriteLine("WAIT");
     }
 
     public bool TryGrowBasic(Organ organ, Vector2 destination)
@@ -483,6 +404,135 @@ public class Organism
         proteins.c--;
         proteins.d--;
         actions--;
+    }
+}
+
+public class Navigation
+{
+    private struct NavigationData
+    {
+        public Organ organ;
+        public Cell target;
+        public int distance;
+        public List<Vector2> path;
+    }
+
+    private Map map;
+    private Dictionary<string, SortedDictionary<int, NavigationData>> proteinData;    
+
+    public Navigation(Map map)
+    {
+        this.map = map;
+        proteinData = new Dictionary<string, SortedDictionary<int, NavigationData>>();
+    }
+
+    private SortedDictionary<int, NavigationData> FindPathsToProteins(Organ organ)
+    {
+        Cell organCell = map.GetCellAtEntityPosition(organ);
+        Cell proteinCell = FindNearestProteinBFS(organCell);
+        int distance = Map.Distance(organCell.position, proteinCell.position);
+
+        proteinData.TryAdd(organ.id, new SortedDictionary<int, NavigationData>());
+        proteinData[organ.id].Add(distance, new NavigationData
+        {
+            organ = organ,
+            target = proteinCell,
+            distance = distance,
+            path = new List<Vector2>(),
+        });
+
+        return proteinData[organ.id];
+    }
+
+    public bool TryFindNearestProtein(Organism organism, out Organ start, out Protein end, out int closestDistance)
+    {
+        start = default;
+        end = default;
+        Cell closest = null;        
+        closestDistance = 999;
+        foreach (Organ organ in organism.organs)
+        {
+            if (!proteinData.TryGetValue(organ.id, out var navDict))
+            {
+                navDict = FindPathsToProteins(organ);
+            }
+
+            if (navDict.Count < 1)
+            {
+                continue;
+            }
+
+            var first = navDict.First().Value;
+            if (first.distance < closestDistance)
+            {                
+                start = organ;
+                end = (Protein)first.target.entity;
+                closest = first.target;
+                closestDistance = first.distance;
+            }
+        }
+
+        return closest != null;
+    }
+
+    public Cell FindNearestProteinBFS(Cell start, HashSet<Cell> exceptions = null)
+    {
+        var cells = map.Cells;
+        int rows = cells.GetLength(0);
+        int cols = cells.GetLength(1);
+
+        var queue = new Queue<Cell>();
+        var visited = new HashSet<Cell>();
+        exceptions ??= new HashSet<Cell>();
+
+        queue.Enqueue(start);
+        visited.Add(start);
+
+        while (queue.Count > 0)
+        {
+            Cell current = queue.Dequeue();
+
+            // Check if it's a protein and not already targeted
+            if (current.entity is Protein && !exceptions.Contains(current))
+            {
+                return current;
+            }
+
+            // Explore neighbors
+            foreach (Cell neighbor in GetNeighbors(cells, current, rows, cols))
+            {
+                if (!visited.Contains(neighbor) && (neighbor.entity == null || !neighbor.entity.isObstacle))
+                {
+                    visited.Add(neighbor);
+                    queue.Enqueue(neighbor);
+                }
+            }
+        }
+
+        // No protein found
+        return null;
+    }
+
+    private static IEnumerable<Cell> GetNeighbors(Cell[,] board, Cell cell, int rows, int cols)
+    {
+        var directions = new (int dx, int dy)[] 
+        { 
+            (0, 1),
+            (1, 0),
+            (0, -1),
+            (-1, 0),
+        };
+
+        foreach (var (dx, dy) in directions)
+        {
+            int newX = (int)cell.position.X + dx;
+            int newY = (int)cell.position.Y + dy;
+
+            if (newX >= 0 && newX < rows && newY >= 0 && newY < cols)
+            {
+                yield return board[newX, newY];
+            }
+        }
     }
 }
 
