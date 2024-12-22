@@ -199,7 +199,8 @@ public class Map
     private Cell[,] cells;
     private int width; // between 16 and 24
     private int height; // between 8 and 12
-    private HashSet<Cell> harvested; 
+    private HashSet<Cell> harvested;
+    private HashSet<Cell> targeted;
 
     public Cell[,] Cells => cells;
     public HashSet<Cell> Harvested => harvested;
@@ -221,6 +222,7 @@ public class Map
     {
         cells = new Cell[width, height];
         harvested = new HashSet<Cell>();
+        targeted = new HashSet<Cell>();
         this.width = cells.GetLength(0);
         this.height = cells.GetLength(1);
         directionVectorsToKeys = directionKeysToVectors.ToDictionary(kvp => kvp.Value, kvp => kvp.Key);
@@ -236,6 +238,11 @@ public class Map
                 };
             }
         }
+    }
+
+    public bool IsAdjacentToFacingTentacle(Cell cell)
+    {
+        return targeted.Contains(cell);
     }
 
     public IEnumerable<Cell> GetNeighbours(Cell cell)
@@ -279,6 +286,33 @@ public class Map
                 cell.entity = entity;
                 cell.isDirty = false;
                 addedEntities.Add(entity);
+                
+                if (cell.entity is Organ oEntity) 
+                {
+                    if (oEntity.type == OrganType.Harvester
+                        && oEntity.isPlayerOwned)
+                    {
+                        var facing = GetCellForPositionAtDirection(cell, oEntity.direction);
+                        if (facing != null && facing.entity is Protein pEntity)
+                        {
+                            pEntity.isHarvested = true;
+                            facing.entity = pEntity;
+                            harvestedIds.Add(facing.entity.id);
+                            harvested.Add(facing);
+                        }
+                    }
+
+                    if (oEntity.type == OrganType.Tentacle
+                        && !oEntity.isPlayerOwned)
+                    {
+                        var facing = GetCellForPositionAtDirection(cell, oEntity.direction);
+                        if (facing != null && !(facing.entity is Wall))
+                        {
+                            targeted.Add(facing);
+                        }
+                    }
+                }
+
                 // Player.Log($"Added: ({cell.position.X},{cell.position.Y}): {cell.entity}");
             }
         }
@@ -295,6 +329,31 @@ public class Map
                     cell.entity = null;
                     cell.isDirty = false;
 
+                    if (prev is Organ oEntity) 
+                    {
+                        if (oEntity.type == OrganType.Harvester
+                            && oEntity.isPlayerOwned)
+                        {
+                            var facing = GetCellForPositionAtDirection(cell, oEntity.direction);
+                            if (facing != null && facing.entity is Protein pEntity)
+                            {
+                                pEntity.isHarvested = false;
+                                facing.entity = pEntity;                               
+                                harvested.Remove(facing);
+                            }
+                        }
+
+                        if (oEntity.type == OrganType.Tentacle
+                            && !oEntity.isPlayerOwned)
+                        {
+                            var facing = GetCellForPositionAtDirection(cell, oEntity.direction);
+                            if (facing != null && !(facing.entity is Wall))
+                            {
+                                targeted.Remove(facing);
+                            }
+                        }
+                    }
+
                     // Player.Log($"Removed: ({cell.position.X},{cell.position.Y}): {prev}");
                 }
                 else
@@ -307,26 +366,38 @@ public class Map
             }
         }
        
-        for (int x = 0; x < width; x++)
-        {
-            for (int y = 0; y < height; y++)
-            {
-                var cell = cells[x, y];
-                if (cell.entity is Organ oEntity 
-                    && oEntity.type == OrganType.Harvester
-                    && oEntity.isPlayerOwned)
-                {
-                    var facing = GetCellForPositionAtDirection(cell, oEntity.direction);
-                    if (facing != null && facing.entity is Protein pEntity)
-                    {
-                        pEntity.isHarvested = true;
-                        facing.entity = pEntity;
-                        harvestedIds.Add(facing.entity.id);
-                        harvested.Add(facing);
-                    }
-                }
-            }
-        }
+        // for (int x = 0; x < width; x++)
+        // {
+        //     for (int y = 0; y < height; y++)
+        //     {
+        //         var cell = cells[x, y];                
+        //         if (cell.entity is Organ oEntity) 
+        //         {
+        //             if (oEntity.type == OrganType.Harvester
+        //                 && oEntity.isPlayerOwned)
+        //             {
+        //                 var facing = GetCellForPositionAtDirection(cell, oEntity.direction);
+        //                 if (facing != null && facing.entity is Protein pEntity)
+        //                 {
+        //                     pEntity.isHarvested = true;
+        //                     facing.entity = pEntity;
+        //                     harvestedIds.Add(facing.entity.id);
+        //                     harvested.Add(facing);
+        //                 }
+        //             }
+
+        //             if (oEntity.type == OrganType.Tentacle
+        //                 && !oEntity.isPlayerOwned)
+        //             {
+        //                 var facing = GetCellForPositionAtDirection(cell, oEntity.direction);
+        //                 if (facing != null && !(facing.entity is Wall))
+        //                 {
+        //                     targeted.Add(facing);
+        //                 }
+        //             }
+        //         }                
+        //     }
+        // }
 
         harvested.RemoveWhere(x => !(x.entity is Protein));
         OnEntitiesAdded = addedEntities;
@@ -851,15 +922,6 @@ public class Navigation
                 if (TryGetPath(cd.organ, cd.op, maxDeviation, true, out PathResult path))
                 {                    
                     int dist = path.cells.Count;
-                    if (cd.op.entity is Organ oEntity 
-                        && oEntity.type == OrganType.Tentacle 
-                        && dist == 2
-                        && oEntity.direction == Map.GetDirectionKey(Vector2.Normalize(path.cells[0].position - path.cells[1].position)))
-                    {
-                        // cant build in front of existing tentacle facing our destination
-                        continue;
-                    }
-
                     var cells = path.cells.Select(x => x.position);
                     navDataDict.TryAdd(dist, new List<NavigationData>());
                     navDataDict[dist].Add(new NavigationData
@@ -1115,6 +1177,12 @@ public class AStar : IPathfinder
 
     public PathResult GetPath(Cell start, Cell end, int maxDeviation, bool ignoreProteins)
     {
+        // if the desintation is in a cell adjacent to facing tentacle we can early exit
+        if (IsAdjacentToFacingTentacle(end))
+        {
+            return null;
+        }
+
         openList.Clear();
         closedList.Clear();
 
@@ -1148,7 +1216,7 @@ public class AStar : IPathfinder
                 bool isDestination = neighbor == end;
                 bool isObstacle = (neighbor.entity != null && neighbor.entity.isObstacle);      
                 bool isTooFar = GetHCost(neighbor, start) > maxDeviation;
-                if (!isDestination && (isObstacle || isTooFar || closedList.Contains(neighbor)))
+                if (!isDestination && (isObstacle || isTooFar || IsAdjacentToFacingTentacle(neighbor) || closedList.Contains(neighbor)))
                 {
                     continue;
                 }
@@ -1211,6 +1279,11 @@ public class AStar : IPathfinder
         }
 
         return 1;
+    }
+
+    private bool IsAdjacentToFacingTentacle(Cell cell)
+    {
+        return map.IsAdjacentToFacingTentacle(cell);        
     }
 
     private IEnumerable<Cell> GetNeighbours(Cell cell)
