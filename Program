@@ -9,7 +9,7 @@ using System.Numerics;
 class Player
 {
     private static DateTime ts = default;
-    private static bool logEnabled = false;
+    private static bool logEnabled = true;
 
     static void Main(string[] args)
     {
@@ -405,8 +405,6 @@ public class Organism
             Vector2 harvesterPos = path[0];
             Vector2 harvesterDir = Vector2.Normalize(protein.position - harvesterPos);
             string dirKey = Map.GetDirectionKey(harvesterDir);
-            // Player.Log($"{harvesterPos} | {harvesterDir} | {dirKey}");
-
             if (TryGrowHarvester(organ, harvesterPos, dirKey))
             {
                 desired.Remove(protein.type);
@@ -596,14 +594,10 @@ public class Navigation
         Cell closest = null;
         int smallestScore = int.MaxValue;        
 
-        Player.Log($"Checking protein paths for {organism.organs.Count} organs");
         foreach (Organ organ in organism.organs)
         {
-            Player.Log($"Checking protein paths for organ {organ.id}");
             if (!organNavDict.TryGetValue(organ.id, out var scoreNavDict))
             {
-                // Player.Log($"Creating {organ.id}");
-                Player.Log($"Calculating new paths for organ {organ.id}");
                 scoreNavDict = FindPathsToAllProteins(organ, maxDistance: 5, includeHarvested: true);
             }
 
@@ -632,7 +626,6 @@ public class Navigation
             }
         }
 
-        Player.Log($"Finished checking protein paths");
         return closest != null;
     }
 
@@ -681,14 +674,11 @@ public class Navigation
 
     private void CalculatePathFromOrganToProtein(Cell start, Cell end)
     {
-        Player.Log($"Calculating path from {start} to {end}");
         if (start.entity == null || !TryGetPath(start, end, out var path))
         {
-            Player.Log($"No path from {start} to {end}");
             return;
         }
         
-        Player.Log($"Building cache for path from {start} to {end}");
         var cells = path.cells.Select(x => x.position);
         organNavDict.TryAdd(start.entity.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
         organNavDict[start.entity.id].TryAdd(path.score, new Dictionary<string, NavigationData>());
@@ -707,14 +697,13 @@ public class Navigation
 
     private bool TryGetPath(Cell start, Cell end, out PathResult path)
     {
+
         path = pathfinder.GetPath(start, end);
         return path != null;
     }
 
     private void OnEntitiesAdded(IEnumerable<IEntity> entities)
     {
-        Player.Log($"Processing {entities.Count()} entity additions");
-
         if (entities.Count() > 0)
         {
             var recalculations = new List<Action>();
@@ -738,7 +727,6 @@ public class Navigation
                             recalculations.Add(delegate
                             {
                                 entityNavDict.Remove(kvp.Key);
-                                // Player.Log($"Addition: Recalculating {navData.origin.entity.id} > {kvp.Key}");
                                 CalculatePathFromOrganToProtein(navData.origin, navData.target);
                             });
                         }
@@ -751,22 +739,15 @@ public class Navigation
                 }
             }
 
-            Player.Log($"Starting recalc | {recalculations.Count}");
             foreach (var recalc in recalculations)
             {
                 recalc?.Invoke();
-                Player.Log($"Finished");
             }
-            Player.Log($"Ending recalc");
-        }        
-
-        Player.Log($"Finished processing entity additions");
+        }
     }
 
     private void OnEntitiesRemoved(IEnumerable<IEntity> entities)
     {
-        Player.Log($"Processing {entities.Count()} entity removals");
-
         if (entities.Count() > 0)
         {
             var recalculations = new List<Action>();
@@ -801,7 +782,6 @@ public class Navigation
                             recalculations.Add(delegate
                             {
                                 entityNavDict.Remove(kvp.Key);
-                                // Player.Log($"Removal: Recalculating {navData.origin.entity.id} > {kvp.Key}");
                                 CalculatePathFromOrganToProtein(navData.origin, navData.target);
                             });
                         }
@@ -818,15 +798,11 @@ public class Navigation
             {
                 recalc?.Invoke();
             }
-        }        
-
-        Player.Log($"Finished processing entity removals");
+        }
     }
 
     private void OnProteinsHarvested(HashSet<string> proteinIds)
     {
-        Player.Log($"Processing {proteinIds.Count()} proteins harvested");
-
         foreach (var pid in proteinIds)
         {
             for (int i = 0; i < organNavDict.Count; i++)
@@ -844,14 +820,12 @@ public class Navigation
                 }
             }
         }
-
-        Player.Log($"Finished processing proteins harvested");
     }
 }
 
 public interface IPathfinder
 {
-    PathResult GetPath(Cell start, Cell end);
+    PathResult GetPath(Cell start, Cell end, int maxDeviation);
 }
 
 public class PathResult
@@ -882,7 +856,7 @@ public class AStar : IPathfinder
         closedList = new HashSet<Cell>();
     }
 
-    public PathResult GetPath(Cell start, Cell end)
+    public PathResult GetPath(Cell start, Cell end, int maxDeviation)
     {
         openList.Clear();
         closedList.Clear();
@@ -916,7 +890,7 @@ public class AStar : IPathfinder
             {
                 bool isDestination = neighbor == end;
                 bool isObstacle = (neighbor.entity != null && neighbor.entity.isObstacle);      
-                bool isTooFar = GetHCost(neighbor, start) > 10;         
+                bool isTooFar = GetHCost(neighbor, start) > maxDeviation;
                 if (!isDestination && (isObstacle || isTooFar || closedList.Contains(neighbor)))
                 {
                     continue;
@@ -972,9 +946,11 @@ public class AStar : IPathfinder
 
     private int GetMovementCost(Cell from, Cell to)
     {
-        if (to.entity != null && to.entity is Protein)
+        if (to.entity != null && to.entity is Protein pEntity)
         {
-            return 15;
+            return pEntity.isHarvested 
+                ? 15 
+                : 10;
         }
 
         return 1;
