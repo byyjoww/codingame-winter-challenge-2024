@@ -309,6 +309,7 @@ public class Map
                         if (facing != null && !(facing.entity is Wall))
                         {
                             targeted.Add(facing);
+                            // Player.Log($"Cell {facing} is targetted");
                         }
                     }
                 }
@@ -350,6 +351,7 @@ public class Map
                             if (facing != null && !(facing.entity is Wall))
                             {
                                 targeted.Remove(facing);
+                                // Player.Log($"Cell {facing} is not targetted");
                             }
                         }
                     }
