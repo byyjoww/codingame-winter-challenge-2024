@@ -382,11 +382,12 @@ public class Organism
     public void Prepare()
     {
         navigation.Refresh();
+        actions = 1;
     }
 
     public void CollectClosestProtein()
     {
-        if (navigation.TryFindNearestProtein(this, 1, desired, out Navigation.NavigationData navData))
+        if (navigation.TryFindNearestProtein(this, 1, 5, 10, desired, out Navigation.NavigationData navData))
         {
             if (HarvestProtein((Organ)navData.origin.entity, (Protein)navData.target.entity, navData.distance, navData.path))
             {
@@ -465,6 +466,11 @@ public class Organism
 
     public bool CanGrow(OrganType organType)
     {
+        if (actions < 1)
+        {
+            return false;
+        }
+
         switch (organType)
         {
             case OrganType.Basic:
@@ -483,6 +489,7 @@ public class Organism
     public bool CanSpore(Organ organ)
     {
         return organ.type == OrganType.Sporer
+            && actions > 1
             && proteins.a > 0
             && proteins.b > 0
             && proteins.c > 0
@@ -557,6 +564,7 @@ public class Navigation
         public Cell target;
         public int distance;
         public int score;
+        public int deviation;
         public List<Vector2> path;
         public HashSet<Vector2> pathSet;
 
@@ -588,7 +596,7 @@ public class Navigation
         OnProteinsHarvested(map.OnProteinsHarvested);
     }
 
-    public bool TryFindNearestProtein(Organism organism, int minDistance, HashSet<ProteinType> types, out NavigationData data)
+    public bool TryFindNearestProtein(Organism organism, int minDistance, int maxDistance, int maxDeviation, HashSet<ProteinType> types, out NavigationData data)
     {
         data = default;
         Cell closest = null;
@@ -598,7 +606,7 @@ public class Navigation
         {
             if (!organNavDict.TryGetValue(organ.id, out var scoreNavDict))
             {
-                scoreNavDict = FindPathsToAllProteins(organ, maxDistance: 5, includeHarvested: true);
+                scoreNavDict = FindPathsToAllProteins(organ, maxDistance: maxDistance, maxDeviation: maxDeviation, includeHarvested: true);
             }
 
             if (scoreNavDict.Count < 1)
@@ -651,7 +659,7 @@ public class Navigation
             && (!requiresType || isOfRequiredType);
     }    
 
-    private SortedDictionary<int, Dictionary<string, NavigationData>> FindPathsToAllProteins(Organ organ, int maxDistance, HashSet<ProteinType> types = null, bool includeHarvested = false)
+    private SortedDictionary<int, Dictionary<string, NavigationData>> FindPathsToAllProteins(Organ organ, int maxDistance, int maxDeviation, HashSet<ProteinType> types = null, bool includeHarvested = false)
     {
         Cell organCell = map.GetCellAtEntityPosition(organ);
         Cell[] proteins = map.Cells
@@ -664,7 +672,7 @@ public class Navigation
 
         foreach (var protein in proteins)
         {
-            CalculatePathFromOrganToProtein(organCell, protein);
+            CalculatePathFromOrganToProtein(organCell, protein, maxDeviation);
         }
 
         // in case we dont find any valid paths
@@ -672,9 +680,9 @@ public class Navigation
         return organNavDict[organ.id];
     }
 
-    private void CalculatePathFromOrganToProtein(Cell start, Cell end)
+    private void CalculatePathFromOrganToProtein(Cell start, Cell end, int maxDeviation)
     {
-        if (start.entity == null || !TryGetPath(start, end, out var path))
+        if (start.entity == null || !TryGetPath(start, end, maxDeviation, out var path))
         {
             return;
         }
@@ -688,6 +696,7 @@ public class Navigation
             target = end,
             distance = path.cells.Count,
             score = path.score,
+            deviation = maxDeviation,
             path = cells.ToList(),
             pathSet = cells.ToHashSet(),
         };
@@ -695,10 +704,9 @@ public class Navigation
         organNavDict[start.entity.id][path.score].TryAdd(end.entity.id, navData);
     }
 
-    private bool TryGetPath(Cell start, Cell end, out PathResult path)
+    private bool TryGetPath(Cell start, Cell end, int maxDeviation, out PathResult path)
     {
-
-        path = pathfinder.GetPath(start, end);
+        path = pathfinder.GetPath(start, end, maxDeviation);
         return path != null;
     }
 
@@ -727,7 +735,7 @@ public class Navigation
                             recalculations.Add(delegate
                             {
                                 entityNavDict.Remove(kvp.Key);
-                                CalculatePathFromOrganToProtein(navData.origin, navData.target);
+                                CalculatePathFromOrganToProtein(navData.origin, navData.target, navData.deviation);
                             });
                         }
 
@@ -782,7 +790,7 @@ public class Navigation
                             recalculations.Add(delegate
                             {
                                 entityNavDict.Remove(kvp.Key);
-                                CalculatePathFromOrganToProtein(navData.origin, navData.target);
+                                CalculatePathFromOrganToProtein(navData.origin, navData.target, navData.deviation);
                             });
                         }
                     }
