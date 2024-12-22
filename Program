@@ -335,6 +335,7 @@ public class Cell
     public Vector2 position;
     public IEntity entity;
     public bool isDirty;
+    public bool isEmpty => entity == null;
 
     public override string ToString()
     {
@@ -387,15 +388,44 @@ public class Organism
 
     public void CollectClosestProtein()
     {
-        if (navigation.TryFindNearestProtein(this, 1, 5, 10, desired, out Navigation.NavigationData navData))
+        if (navigation.TryFindNearestProtein(this, 1, 10, 10, desired, out Navigation.NavigationData navData))
         {
             if (HarvestProtein((Organ)navData.origin.entity, (Protein)navData.target.entity, navData.distance, navData.path))
             {
+                Player.Log($"Harvesting protein");
                 return;
             }
         }
+
+        if (TryGetRandomPositionForRandomOrgan(out var organ, out var target) && TryGrowAny(organ, target.position))
+        {
+            Player.Log($"Growing");
+            return;
+        }
         
         Player.Command("WAIT");
+    }
+
+    private bool TryGetRandomPositionForRandomOrgan(out Organ organ, out Cell target)
+    {
+        foreach (var o in organs)
+        {
+            var cell = map.GetCellAtEntityPosition(o);
+            var neighbours = map.GetNeighbours(cell);
+            foreach (var n in neighbours)
+            {
+                if (n.isEmpty)
+                {
+                    organ = o;
+                    target = n;
+                    return true;
+                }
+            }
+        }
+
+        organ = default;
+        target = default;
+        return false;
     }
 
     private bool HarvestProtein(Organ organ, Protein protein, int distance, List<Vector2> path)
