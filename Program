@@ -608,7 +608,7 @@ public class Organism
             var neighbours = map.GetNeighbours(cell);
             foreach (var n in neighbours)
             {
-                if (n.isEmpty || (ignoreProteins && n.entity is Protein))
+                if (!map.Targeted.Contains(n) && (n.isEmpty || (ignoreProteins && n.entity is Protein)))
                 {
                     organ = o;
                     target = n;
