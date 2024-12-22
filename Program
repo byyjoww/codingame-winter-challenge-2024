@@ -8,7 +8,8 @@ using System.Numerics;
 
 class Player
 {
-    private static DateTime ts;
+    private static DateTime ts = default;
+    private static bool logEnabled = false;
 
     static void Main(string[] args)
     {
@@ -29,7 +30,7 @@ class Player
             int entityCount = int.Parse(Console.ReadLine());
 
             ts = DateTime.UtcNow;
-            Console.Error.WriteLine($"Start turn");
+            Player.Log($"Start turn");
 
             List<Protein> proteins = new List<Protein>();
             List<Organ> organs = new List<Organ>();
@@ -71,17 +72,22 @@ class Player
                         continue;
                     }
 
+                    bool isPlayerOwned = owner == 1;
                     var parentOrganism = organisms.FirstOrDefault(x => x.id == organRootId);
                     if (parentOrganism == null)
-                    {
+                    {                        
                         parentOrganism = new Organism
                         {
                             id = organRootId,
-                            proteins = owner == 1
+                            proteins = isPlayerOwned
                                 ? playerProteins
                                 : opponentProteins,
-                            map = map,
-                            navigation = new Navigation(map),
+                            map = isPlayerOwned 
+                                ? map
+                                : null,
+                            navigation = isPlayerOwned
+                                ? new Navigation(map)
+                                : null,
                         };
 
                         organisms.Add(parentOrganism);
@@ -94,7 +100,7 @@ class Player
                         type = ot,
                         position = new Vector2(x, y),
                         direction = organDir,
-                        isPlayerOwned = owner == 1,
+                        isPlayerOwned = isPlayerOwned,
                     };
 
                     organs.Add(organ);
@@ -126,11 +132,23 @@ class Player
             for (int i = 0; i < requiredActionsCount; i++)
             {
                 Organism organism = playerOrganisms[i];
+                organism.Prepare();
                 organism.CollectClosestProtein();
             }
 
-            Console.Error.WriteLine($"End turn {GetTimeSinceStartOfTurn()}");
+            Player.Log($"End turn");
         }
+    }
+
+    public static void Log(string message)
+    {
+        if (!logEnabled) { return; }
+        Console.Error.WriteLine($"[{GetTimeSinceStartOfTurn()}] {message}");
+    }
+
+    public static void Command(string message)
+    {
+        Console.WriteLine(message);
     }
 
     public static float GetTimeSinceStartOfTurn()
@@ -214,7 +232,7 @@ public class Map
                 // still the same entity as last turn
                 cell.isDirty = false;
 
-                // Console.Error.WriteLine($"No Change: ({cell.position.X},{cell.position.Y}): {cell.entity}");            
+                // Player.Log($"No Change: ({cell.position.X},{cell.position.Y}): {cell.entity}");            
             }
             else
             {
@@ -222,7 +240,7 @@ public class Map
                 cell.entity = entity;
                 cell.isDirty = false;
                 addedEntities.Add(entity);
-                // Console.Error.WriteLine($"Added: ({cell.position.X},{cell.position.Y}): {cell.entity}");
+                // Player.Log($"Added: ({cell.position.X},{cell.position.Y}): {cell.entity}");
             }
         }
 
@@ -238,14 +256,14 @@ public class Map
                     cell.entity = null;
                     cell.isDirty = false;
 
-                    // Console.Error.WriteLine($"Removed: ({cell.position.X},{cell.position.Y}): {prev}");
+                    // Player.Log($"Removed: ({cell.position.X},{cell.position.Y}): {prev}");
                 }
                 else
                 {
                     // empty cell
                     cell.isDirty = false;
 
-                    // Console.Error.WriteLine($"Empty: ({cell.position.X},{cell.position.Y}): {cell.entity}");
+                    // Player.Log($"Empty: ({cell.position.X},{cell.position.Y}): {cell.entity}");
                 }
             }
         }
@@ -338,6 +356,14 @@ public class Organism
 
     public bool isPlayerOwned => root.isPlayerOwned;
 
+    private HashSet<ProteinType> desired = new HashSet<ProteinType>()
+    {
+        ProteinType.A,
+        ProteinType.B,
+        ProteinType.C,
+        ProteinType.D,
+    };
+
     public void AddOrgan(Organ organ)
     {
         if (organIds.Contains(organ.organId))
@@ -353,20 +379,13 @@ public class Organism
         }
     }
 
-    public void CollectClosestProtein()
+    public void Prepare()
     {
         navigation.Refresh();
+    }
 
-        HashSet<ProteinType> desired = new HashSet<ProteinType>()
-        {
-            ProteinType.A,
-            ProteinType.B,
-            ProteinType.C,
-            ProteinType.D,
-        };
-
-        desired.ExceptWith(map.Harvested.Select(x => ((Protein)x.entity).type));
-        
+    public void CollectClosestProtein()
+    {
         if (navigation.TryFindNearestProtein(this, 1, desired, out Navigation.NavigationData navData))
         {
             if (HarvestProtein((Organ)navData.origin.entity, (Protein)navData.target.entity, navData.distance, navData.path))
@@ -375,21 +394,22 @@ public class Organism
             }
         }
         
-        Console.WriteLine("WAIT");
+        Player.Command("WAIT");
     }
 
     private bool HarvestProtein(Organ organ, Protein protein, int distance, List<Vector2> path)
     {
-        Console.Error.WriteLine($"Closest protein to {organ} is {protein} | Distance: {distance} | Path: [{string.Join(", ", path)}]");
+        Player.Log($"Closest protein to {organ} is {protein} | Distance: {distance} | Path: [{string.Join(", ", path)}]");
         if (distance == 2 && CanGrow(OrganType.Harvester))
         {
             Vector2 harvesterPos = path[0];
             Vector2 harvesterDir = Vector2.Normalize(protein.position - harvesterPos);
             string dirKey = Map.GetDirectionKey(harvesterDir);
-            // Console.Error.WriteLine($"{harvesterPos} | {harvesterDir} | {dirKey}");
+            // Player.Log($"{harvesterPos} | {harvesterDir} | {dirKey}");
 
             if (TryGrowHarvester(organ, harvesterPos, dirKey))
             {
+                desired.Remove(protein.type);
                 return true;
             }
         }
@@ -479,8 +499,8 @@ public class Organism
         }
 
         PayGrowthCosts(growthType);
-        Console.Error.WriteLine($"Organ {organ.organId} (organism {id}) is growing a {growthType} from {organ.position} to {destination} facing {direction}");
-        Console.WriteLine($"GROW {organ.organId} {destination.X} {destination.Y} {growthType.ToString().ToUpper()} {direction}");
+        Player.Log($"Organ {organ.organId} (organism {id}) is growing a {growthType} from {organ.position} to {destination} facing {direction}");
+        Player.Command($"GROW {organ.organId} {destination.X} {destination.Y} {growthType.ToString().ToUpper()} {direction}");
         return true;
     }
 
@@ -492,8 +512,8 @@ public class Organism
         }
 
         PaySporeCosts();
-        Console.Error.WriteLine($"Organ {organ.id} (organism {id}) is sporing a root from {organ.position} to {destination}");
-        Console.WriteLine($"SPORE {organ.id} {destination.X} {destination.Y}");
+        Player.Log($"Organ {organ.id} (organism {id}) is sporing a root from {organ.position} to {destination}");
+        Player.Command($"SPORE {organ.id} {destination.X} {destination.Y}");
         return true;
     }
 
@@ -574,14 +594,17 @@ public class Navigation
     {
         data = default;
         Cell closest = null;
-        int smallestScore = int.MaxValue;
+        int smallestScore = int.MaxValue;        
 
+        Player.Log($"Checking protein paths for {organism.organs.Count} organs");
         foreach (Organ organ in organism.organs)
         {
+            Player.Log($"Checking protein paths for organ {organ.id}");
             if (!organNavDict.TryGetValue(organ.id, out var scoreNavDict))
             {
-                // Console.Error.WriteLine($"Creating {organ.id}");
-                scoreNavDict = FindPathsToAllProteins(organ, includeHarvested: true);
+                // Player.Log($"Creating {organ.id}");
+                Player.Log($"Calculating new paths for organ {organ.id}");
+                scoreNavDict = FindPathsToAllProteins(organ, maxDistance: 5, includeHarvested: true);
             }
 
             if (scoreNavDict.Count < 1)
@@ -609,6 +632,7 @@ public class Navigation
             }
         }
 
+        Player.Log($"Finished checking protein paths");
         return closest != null;
     }
 
@@ -634,14 +658,15 @@ public class Navigation
             && (!requiresType || isOfRequiredType);
     }    
 
-    private SortedDictionary<int, Dictionary<string, NavigationData>> FindPathsToAllProteins(Organ organ, HashSet<ProteinType> types = null, bool includeHarvested = false)
+    private SortedDictionary<int, Dictionary<string, NavigationData>> FindPathsToAllProteins(Organ organ, int maxDistance, HashSet<ProteinType> types = null, bool includeHarvested = false)
     {
         Cell organCell = map.GetCellAtEntityPosition(organ);
         Cell[] proteins = map.Cells
             .Cast<Cell>()
             .Where(x => x.entity is Protein pEntity
                 && (types == null || types.Contains(pEntity.type))
-                && (includeHarvested || !pEntity.isHarvested))
+                && (includeHarvested || !pEntity.isHarvested)
+                && Map.Distance(organ.position, x.position) <= maxDistance)
             .ToArray();
 
         foreach (var protein in proteins)
@@ -656,11 +681,14 @@ public class Navigation
 
     private void CalculatePathFromOrganToProtein(Cell start, Cell end)
     {
+        Player.Log($"Calculating path from {start} to {end}");
         if (start.entity == null || !TryGetPath(start, end, out var path))
         {
+            Player.Log($"No path from {start} to {end}");
             return;
         }
         
+        Player.Log($"Building cache for path from {start} to {end}");
         var cells = path.cells.Select(x => x.position);
         organNavDict.TryAdd(start.entity.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
         organNavDict[start.entity.id].TryAdd(path.score, new Dictionary<string, NavigationData>());
@@ -677,52 +705,106 @@ public class Navigation
         organNavDict[start.entity.id][path.score].TryAdd(end.entity.id, navData);
     }
 
-    private bool DefaultObstacleComparer(IEntity entity)
-    {
-        Type t = entity.GetType();
-        return t == typeof(Wall) 
-            || t == typeof(Organ) 
-            || t == typeof(Protein) && ((Protein)entity).isHarvested;
-    }
-
-    private bool NonBlockingObstacleComparer(IEntity entity)
-    {
-        Type t = entity.GetType();
-        return t == typeof(Wall) || t == typeof(Organ);
-    }
-
     private bool TryGetPath(Cell start, Cell end, out PathResult path)
     {
-        path = pathfinder.GetPath(start, end, NonBlockingObstacleComparer);
+        path = pathfinder.GetPath(start, end);
         return path != null;
     }
 
     private void OnEntitiesAdded(IEnumerable<IEntity> entities)
     {
-        var recalculations = new List<Action>();
-        var entityPositions = entities
-            .Select(x => x.position)
-            .ToHashSet();
+        Player.Log($"Processing {entities.Count()} entity additions");
 
-        for (int i = 0; i < organNavDict.Count; i++)
+        if (entities.Count() > 0)
         {
-            var distanceDict = organNavDict.ElementAt(i).Value;
-            for (int j = 0; j < distanceDict.Count; j++)
+            var recalculations = new List<Action>();
+            var entityPositions = entities
+                .Select(x => x.position)
+                .ToHashSet();
+
+            for (int i = 0; i < organNavDict.Count; i++)
             {
-                var distanceKvp = distanceDict.ElementAt(j);
-                var entityNavDict = distanceKvp.Value;
-                for (int k = 0; k < entityNavDict.Count; k++)
+                var distanceDict = organNavDict.ElementAt(i).Value;
+                for (int j = 0; j < distanceDict.Count; j++)
                 {
-                    var kvp = entityNavDict.ElementAt(k);
-                    var navData = kvp.Value;
-                    if (navData.pathSet.Overlaps(entityPositions))
+                    var distanceKvp = distanceDict.ElementAt(j);
+                    var entityNavDict = distanceKvp.Value;
+                    for (int k = 0; k < entityNavDict.Count; k++)
                     {
-                        recalculations.Add(delegate
+                        var kvp = entityNavDict.ElementAt(k);
+                        var navData = kvp.Value;
+                        if (navData.pathSet.Overlaps(entityPositions))
                         {
-                            entityNavDict.Remove(kvp.Key);
-                            // Console.Error.WriteLine($"Addition: Recalculating {navData.origin.entity.id} > {kvp.Key}");
-                            CalculatePathFromOrganToProtein(navData.origin, navData.target);
-                        });
+                            recalculations.Add(delegate
+                            {
+                                entityNavDict.Remove(kvp.Key);
+                                // Player.Log($"Addition: Recalculating {navData.origin.entity.id} > {kvp.Key}");
+                                CalculatePathFromOrganToProtein(navData.origin, navData.target);
+                            });
+                        }
+
+                        if (entityNavDict.Count < 1)
+                        {
+                            distanceDict.Remove(distanceKvp.Key);
+                        }
+                    }
+                }
+            }
+
+            Player.Log($"Starting recalc | {recalculations.Count}");
+            foreach (var recalc in recalculations)
+            {
+                recalc?.Invoke();
+                Player.Log($"Finished");
+            }
+            Player.Log($"Ending recalc");
+        }        
+
+        Player.Log($"Finished processing entity additions");
+    }
+
+    private void OnEntitiesRemoved(IEnumerable<IEntity> entities)
+    {
+        Player.Log($"Processing {entities.Count()} entity removals");
+
+        if (entities.Count() > 0)
+        {
+            var recalculations = new List<Action>();
+            var entityPositions = entities
+                .Select(x => x.position)
+                .ToHashSet();
+
+            foreach (var entity in entities)
+            {
+                organNavDict.Remove(entity.id);
+            }
+
+            for (int i = 0; i < organNavDict.Count; i++)
+            {
+                var distanceDict = organNavDict.ElementAt(i).Value;
+                for (int j = 0; j < distanceDict.Count; j++)
+                {
+                    var distanceKvp = distanceDict.ElementAt(j);
+                    var entityNavDict = distanceKvp.Value;
+
+                    foreach (var entity in entities)
+                    {
+                        entityNavDict.Remove(entity.id);
+                    }
+
+                    for (int k = 0; k < entityNavDict.Count; k++)
+                    {
+                        var kvp = entityNavDict.ElementAt(k);
+                        var navData = kvp.Value;
+                        if (navData.pathSet.Overlaps(entityPositions))
+                        {
+                            recalculations.Add(delegate
+                            {
+                                entityNavDict.Remove(kvp.Key);
+                                // Player.Log($"Removal: Recalculating {navData.origin.entity.id} > {kvp.Key}");
+                                CalculatePathFromOrganToProtein(navData.origin, navData.target);
+                            });
+                        }
                     }
 
                     if (entityNavDict.Count < 1)
@@ -731,69 +813,20 @@ public class Navigation
                     }
                 }
             }
-        }
 
-        foreach (var recalc in recalculations)
-        {
-            recalc?.Invoke();
-        }
-    }
-
-    private void OnEntitiesRemoved(IEnumerable<IEntity> entities)
-    {
-        var recalculations = new List<Action>();
-        var entityPositions = entities
-            .Select(x => x.position)
-            .ToHashSet();
-
-        foreach (var entity in entities)
-        {
-            organNavDict.Remove(entity.id);
-        }
-
-        for (int i = 0; i < organNavDict.Count; i++)
-        {
-            var distanceDict = organNavDict.ElementAt(i).Value;
-            for (int j = 0; j < distanceDict.Count; j++)
+            foreach (var recalc in recalculations)
             {
-                var distanceKvp = distanceDict.ElementAt(j);
-                var entityNavDict = distanceKvp.Value;
-
-                foreach (var entity in entities)
-                {
-                    entityNavDict.Remove(entity.id);
-                }
-
-                for (int k = 0; k < entityNavDict.Count; k++)
-                {
-                    var kvp = entityNavDict.ElementAt(k);
-                    var navData = kvp.Value;
-                    if (navData.pathSet.Overlaps(entityPositions))
-                    {
-                        recalculations.Add(delegate
-                        {
-                            entityNavDict.Remove(kvp.Key);
-                            // Console.Error.WriteLine($"Removal: Recalculating {navData.origin.entity.id} > {kvp.Key}");
-                            CalculatePathFromOrganToProtein(navData.origin, navData.target);
-                        });
-                    }
-                }
-
-                if (entityNavDict.Count < 1)
-                {
-                    distanceDict.Remove(distanceKvp.Key);
-                }
+                recalc?.Invoke();
             }
-        }
+        }        
 
-        foreach (var recalc in recalculations)
-        {
-            recalc?.Invoke();
-        }
+        Player.Log($"Finished processing entity removals");
     }
 
     private void OnProteinsHarvested(HashSet<string> proteinIds)
     {
+        Player.Log($"Processing {proteinIds.Count()} proteins harvested");
+
         foreach (var pid in proteinIds)
         {
             for (int i = 0; i < organNavDict.Count; i++)
@@ -811,12 +844,14 @@ public class Navigation
                 }
             }
         }
+
+        Player.Log($"Finished processing proteins harvested");
     }
 }
 
 public interface IPathfinder
 {
-    PathResult GetPath(Cell start, Cell end, Func<IEntity, bool> isObstacle);
+    PathResult GetPath(Cell start, Cell end);
 }
 
 public class PathResult
@@ -847,7 +882,7 @@ public class AStar : IPathfinder
         closedList = new HashSet<Cell>();
     }
 
-    public PathResult GetPath(Cell start, Cell end, Func<IEntity, bool> isObstacle)
+    public PathResult GetPath(Cell start, Cell end)
     {
         openList.Clear();
         closedList.Clear();
@@ -879,7 +914,10 @@ public class AStar : IPathfinder
 
             foreach (var neighbor in GetNeighbours(currentNode.Cell))
             {
-                if (neighbor != end && (neighbor.entity != null && isObstacle(neighbor.entity)) || closedList.Contains(neighbor))
+                bool isDestination = neighbor == end;
+                bool isObstacle = (neighbor.entity != null && neighbor.entity.isObstacle);      
+                bool isTooFar = GetHCost(neighbor, start) > 10;         
+                if (!isDestination && (isObstacle || isTooFar || closedList.Contains(neighbor)))
                 {
                     continue;
                 }
@@ -956,6 +994,7 @@ public struct Organ : IEntity
     public Vector2 position { get; set; }
     public string direction { get; set; }
     public bool isPlayerOwned { get; set; }    
+    public bool isObstacle => true;
 
     public override string ToString()
     {
@@ -969,6 +1008,7 @@ public struct Protein : IEntity
     public ProteinType type { get; set; }
     public Vector2 position { get; set; }
     public bool isHarvested { get; set; }    
+    public bool isObstacle => false;
 
     public override string ToString()
     {
@@ -979,7 +1019,8 @@ public struct Protein : IEntity
 public struct Wall : IEntity
 {
     public string id { get; set; }
-    public Vector2 position { get; set; }    
+    public Vector2 position { get; set; }  
+    public bool isObstacle => true;  
 
     public override string ToString()
     {
@@ -991,6 +1032,7 @@ public interface IEntity
 {
     string id { get; }
     Vector2 position { get; }    
+    bool isObstacle { get; }
 }
 
 public class ProteinReserve
