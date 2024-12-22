@@ -10,6 +10,8 @@ class Player
 {
     private static DateTime ts = default;
     private static bool logEnabled = true;
+    private static bool commentsEnabled = true;
+    private static Dictionary<string, bool> comments = new Dictionary<string, bool>();
 
     static void Main(string[] args)
     {
@@ -30,6 +32,7 @@ class Player
             int entityCount = int.Parse(Console.ReadLine());
 
             ts = DateTime.UtcNow;
+            comments.Clear();
             Player.Log($"Start turn");
 
             List<Protein> proteins = new List<Protein>();
@@ -146,22 +149,56 @@ class Player
         Console.Error.WriteLine($"[{GetTimeSinceStartOfTurn()}] {message}");
     }
 
-    public static void Command(string message)
+    public static void Command(string message, string comment = "")
+    {                
+        Console.WriteLine(message + GetComment(comment));
+    }
+
+    public static void AddComment(string comment, bool clear = false, bool persistent = false)
     {
-        Console.WriteLine(message);
+        if (!commentsEnabled) { return; }
+        if (clear) { ClearComments(); }
+        comments.TryAdd(comment, persistent);
+    }    
+
+    public static void ClearComments()
+    {
+        if (!commentsEnabled) { return; }
+        var keysToRemove = comments
+            .Where(kv => kv.Value == false)
+            .Select(kv => kv.Key)
+            .ToArray();
+
+        foreach (var key in keysToRemove)
+        {
+            comments.Remove(key);
+        }
     }
 
     public static float GetTimeSinceStartOfTurn()
     {
         return (float)(DateTime.UtcNow - ts).TotalMilliseconds;
     }
+
+    private static string GetComment(string cmdComment)
+    {
+        if (!commentsEnabled) { return string.Empty; }
+        
+        string comment = cmdComment != "" 
+            ? cmdComment
+            : string.Join(", ", Player.comments.Keys);
+
+        return comment.Length > 0
+            ? " " + comment.ToUpper()
+            : string.Empty;
+    }
 }
 
 public class Map
 {
     private Cell[,] cells;
-    private int width;
-    private int height;
+    private int width; // between 16 and 24
+    private int height; // between 8 and 12
     private HashSet<Cell> harvested; 
 
     public Cell[,] Cells => cells;
@@ -171,13 +208,14 @@ public class Map
     public List<IEntity> OnEntitiesRemoved;
     public HashSet<string> OnProteinsHarvested;
 
-    private static Dictionary<string, Vector2> movementDirections = new Dictionary<string, Vector2>
+    private static Dictionary<Vector2, string> directionVectorsToKeys;
+    private static Dictionary<string, Vector2> directionKeysToVectors = new Dictionary<string, Vector2>
     {
         { "N", new Vector2(0, -1) },  // Up
         { "S", new Vector2(0, 1) }, // Down
         { "W", new Vector2(-1, 0) }, // Left
         { "E", new Vector2(1, 0) },  // Right
-    };
+    };    
 
     public Map(int width, int height)
     {
@@ -185,6 +223,7 @@ public class Map
         harvested = new HashSet<Cell>();
         this.width = cells.GetLength(0);
         this.height = cells.GetLength(1);
+        directionVectorsToKeys = directionKeysToVectors.ToDictionary(kvp => kvp.Value, kvp => kvp.Key);
         for (int x = 0; x < width; x++)
         {
             for (int y = 0; y < height; y++)
@@ -201,7 +240,7 @@ public class Map
 
     public IEnumerable<Cell> GetNeighbours(Cell cell)
     {
-        foreach (var dir in movementDirections.Values)
+        foreach (var dir in directionKeysToVectors.Values)
         {
             int newX = (int)cell.position.X + (int)dir.X;
             int newY = (int)cell.position.Y + (int)dir.Y;
@@ -273,7 +312,9 @@ public class Map
             for (int y = 0; y < height; y++)
             {
                 var cell = cells[x, y];
-                if (cell.entity is Organ oEntity && oEntity.type == OrganType.Harvester)
+                if (cell.entity is Organ oEntity 
+                    && oEntity.type == OrganType.Harvester
+                    && oEntity.isPlayerOwned)
                 {
                     var facing = GetCellForPositionAtDirection(cell, oEntity.direction);
                     if (facing != null && facing.entity is Protein pEntity)
@@ -298,14 +339,34 @@ public class Map
         return cells[(int)entity.position.X, (int)entity.position.Y];
     }
 
+    public string[] GetUnoccupiedDirections(Vector2 position, bool includeOpponentOrgans = false)
+    {        
+        var entityCell = cells[(int)position.X, (int)position.Y];
+        var neighbours = GetNeighbours(entityCell);
+
+        var unoccupiedDirections = new List<string>();
+        foreach (var neighbour in neighbours)
+        {           
+            var directionVector = neighbour.position - entityCell.position;
+            bool isUnnocupied =  neighbour.isEmpty 
+                || (includeOpponentOrgans && (neighbour.entity is Organ oEntity && !oEntity.isPlayerOwned));
+            if (isUnnocupied && directionVectorsToKeys.TryGetValue(directionVector, out var directionKey))
+            {
+                unoccupiedDirections.Add(directionKey);
+            }
+        }
+
+        return unoccupiedDirections.ToArray();
+    }
+
     public Cell GetCellForPositionAtDirection(Cell cell, string direction)
     {
-        if (!movementDirections.ContainsKey(direction))
+        if (!directionKeysToVectors.ContainsKey(direction))
         {
             return null;
         }
 
-        Vector2 offset = movementDirections[direction];
+        Vector2 offset = directionKeysToVectors[direction];
         Vector2 targetPos = cell.position + offset;
 
         int targetX = (int)targetPos.X;
@@ -326,7 +387,7 @@ public class Map
 
     public static string GetDirectionKey(Vector2 dir)
     {
-        return movementDirections.FirstOrDefault(x => x.Value == dir).Key;
+        return directionKeysToVectors.FirstOrDefault(x => x.Value == dir).Key;
     }
 }
 
@@ -389,6 +450,16 @@ public class Organism
 
     public void Prepare()
     {
+        var organIdsToRemove = new HashSet<int>();
+        foreach (var removal in map.OnEntitiesRemoved)
+        {
+            if (removal is Organ org && organIds.Contains(org.organId))
+            {
+                organIdsToRemove.Add(org.organId);
+            }
+        }
+
+        organs.RemoveAll(x => organIdsToRemove.Contains(x.organId));
         navigation.Refresh();
         actions = 1;
     }
@@ -396,42 +467,53 @@ public class Organism
     public void Act()
     {
         // first priority is defense
+        Player.AddComment("DEFENDING", clear: true);
         if (navigation.TryFindNearestOpponent(this, minDistanceToDefend, maxDistanceToDefend, maxDeviationToDefend, out Navigation.NavigationData opponentNavData))
         {
             Organ org = (Organ)opponentNavData.origin.entity;
             Organ op = (Organ)opponentNavData.target.entity;
             int distToOp = opponentNavData.distance;
-            List<Vector2> pathToOp = opponentNavData.path;
+            List<Vector2> pathToOp = opponentNavData.path;            
             if (Defend(org,op, distToOp, pathToOp))
-            {
-                Player.Log($"Defending");
+            {                
                 return;
             }
         }
 
+        // second priority is to divide if we have collected enough proteins
+        if (desired.Count == 0)
+        {
+            Player.AddComment("READY TO SPORE", persistent: true);
+        }
+
         // second priority is to harvest
+        Player.AddComment("HARVESTING", clear: true);
         if (navigation.TryFindNearestProtein(this, minDistanceToHarvest, maxDistanceToHarvest, maxDeviationToHarvest, desired, out Navigation.NavigationData proteinNavData))
         {
             Organ org = (Organ)proteinNavData.origin.entity;
             Protein prot = (Protein)proteinNavData.target.entity;
             int distToProt = proteinNavData.distance;
-            List<Vector2> pathToProt = proteinNavData.path;
+            List<Vector2> pathToProt = proteinNavData.path;            
             if (HarvestProtein(org, prot, distToProt, pathToProt))
-            {
-                Player.Log($"Harvesting protein");
+            {                
                 return;
             }
         }
 
-        // last priority is to grow randomly
-        if (TryGetRandomPositionForRandomOrgan(out var organ, out var target) && TryGrowAny(organ, target.position))
-        {
-            Player.Log($"Growing randomly");
-            return;
+        // last priority is to expand
+        Player.AddComment("EXPANDING", clear: true);
+        if (TryGetRandomPositionForRandomOrgan(out var organ, out var target))
+        {          
+            var dirs = map.GetUnoccupiedDirections(target.position);
+            if (TryGrowAny(organ, target.position, dirs.FirstOrDefault()))
+            {
+                return;
+            }            
         }
         
         // if no proteins or spaces left just wait for the game to end
-        Player.Command("WAIT");
+        Player.AddComment("WAITING", clear: true);
+        Player.Command("WAIT");       
     }
 
     private bool TryGetRandomPositionForRandomOrgan(out Organ organ, out Cell target)
@@ -472,7 +554,8 @@ public class Organism
         }
         else
         {
-            if (TryGrowAny(organ, path[0]))
+            var dirs = map.GetUnoccupiedDirections(path[0]);
+            if (TryGrowAny(organ, path[0], dirs.FirstOrDefault()))
             {
                 return true;
             }
@@ -480,7 +563,8 @@ public class Organism
 
         if (distance > 2)
         {
-            if (TryGrowAny(organ, path[0]))
+            var dirs = map.GetUnoccupiedDirections(path[0]);
+            if (TryGrowAny(organ, path[0], dirs.FirstOrDefault()))
             {
                 return true;
             }
@@ -526,12 +610,12 @@ public class Organism
         return Grow(organ, OrganType.Sporer, destination, direction);
     }
 
-    public bool TryGrowAny(Organ organ, Vector2 destination)
+    public bool TryGrowAny(Organ organ, Vector2 destination, string direction)
     {
         if (TryGrowBasic(organ, destination)
-            || TryGrowTentacle(organ, destination, "N")
-            || TryGrowSporer(organ, destination, "N")
-            || TryGrowHarvester(organ, destination, "N"))
+            || TryGrowTentacle(organ, destination, direction)
+            || TryGrowSporer(organ, destination, direction)
+            || TryGrowHarvester(organ, destination, direction))
         {
             return true;
         }
@@ -580,7 +664,7 @@ public class Organism
 
         PayGrowthCosts(growthType);
         Player.Log($"Organ {organ.organId} (organism {id}) is growing a {growthType} from {organ.position} to {destination} facing {direction}");
-        Player.Command($"GROW {organ.organId} {destination.X} {destination.Y} {growthType.ToString().ToUpper()} {direction}");
+        Player.Command($"GROW {organ.organId} {destination.X} {destination.Y} {growthType.ToString().ToUpper()} {direction}"/*, $"GROWING {growthType}"*/);
         return true;
     }
 
@@ -752,12 +836,14 @@ public class Navigation
         for (int i = 0; i < ranking.Count; i++)
         {        
             var r = ranking.ElementAt(i);
+            var navDataDict = new SortedDictionary<int, List<NavigationData>>();
             foreach (var cd in r.Value)
             {
                 if (TryGetPath(cd.organ, cd.op, maxDeviation, out PathResult path))
                 {
                     var cells = path.cells.Select(x => x.position);
-                    data = new NavigationData
+                    navDataDict.TryAdd(path.cells.Count, new List<NavigationData>());
+                    navDataDict[path.cells.Count].Add(new NavigationData
                     {
                         origin = cd.organ,
                         target = cd.op,
@@ -766,9 +852,14 @@ public class Navigation
                         deviation = maxDeviation,
                         path = cells.ToList(),
                         pathSet = cells.ToHashSet(),
-                    };
-                    return true;
+                    });
                 }
+            }
+
+            if (navDataDict.Count > 0)
+            {
+                data = navDataDict.First().Value.First();           
+                return true;
             }
         }
 
@@ -1121,7 +1212,7 @@ public struct Organ : IEntity
 
     public override string ToString()
     {
-        return $"Organ {type} ({(isPlayerOwned ? "Player" : "Opponent")})";
+        return $"{id} {type} ({(isPlayerOwned ? "Player" : "Opponent")})";
     }
 }
 
@@ -1135,7 +1226,7 @@ public struct Protein : IEntity
 
     public override string ToString()
     {
-        return $"Protein {type} (harvested: {isHarvested})";
+        return $"{id} {type} (harvested: {isHarvested})";
     }
 }
 
@@ -1147,7 +1238,7 @@ public struct Wall : IEntity
 
     public override string ToString()
     {
-        return $"Wall";
+        return $"{id}";
     }
 }
 
