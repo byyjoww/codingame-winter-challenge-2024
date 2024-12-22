@@ -204,6 +204,7 @@ public class Map
 
     public Cell[,] Cells => cells;
     public HashSet<Cell> Harvested => harvested;
+    public HashSet<Cell> Targeted => targeted;
 
     public List<IEntity> OnEntitiesAdded;
     public List<IEntity> OnEntitiesRemoved;
@@ -212,8 +213,8 @@ public class Map
     private static Dictionary<Vector2, string> directionVectorsToKeys;
     private static Dictionary<string, Vector2> directionKeysToVectors = new Dictionary<string, Vector2>
     {
-        { "N", new Vector2(0, -1) },  // Up
-        { "S", new Vector2(0, 1) }, // Down
+        { "N", new Vector2(0, -1) }, // Up
+        { "S", new Vector2(0, 1) },  // Down
         { "W", new Vector2(-1, 0) }, // Left
         { "E", new Vector2(1, 0) },  // Right
     };    
@@ -568,7 +569,7 @@ public class Organism
             int distToProt = proteinNavData.distance;
             List<Vector2> pathToProt = proteinNavData.path;            
             if (HarvestProtein(org, prot, distToProt, pathToProt))
-            {                
+            {
                 return;
             }
         }
@@ -576,12 +577,12 @@ public class Organism
         // expand to empty tiles
         Player.AddComment("EXPANDING EMPTY", clear: true);
         if (TryGetRandomPositionForRandomOrgan(out var organ, out var target, ignoreProteins: false))
-        {          
+        {
             var dirs = map.GetUnoccupiedDirections(target.position);
             if (TryGrowAny(organ, target.position, dirs.FirstOrDefault()))
             {
                 return;
-            }            
+            }
         }
 
         // if we want expand onto empty tiles, start occupying tiles containing proteins we harvest
@@ -591,12 +592,12 @@ public class Organism
             if (TryGrowAny(organ, target.position, string.Empty))
             {
                 return;
-            }            
+            }
         }
-        
+
         // if no proteins or spaces left just wait for the game to end
         Player.AddComment("WAITING", clear: true);
-        Player.Command("WAIT");       
+        Player.Command("WAIT");
     }
 
     private bool TryGetRandomPositionForRandomOrgan(out Organ organ, out Cell target, bool ignoreProteins = false)
@@ -918,10 +919,11 @@ public class Navigation
         for (int i = 0; i < ranking.Count; i++)
         {        
             var r = ranking.ElementAt(i);
-            var navDataDict = new SortedDictionary<int, List<NavigationData>>();
+            var navDataDict = new SortedDictionary<int, List<NavigationData>>();            
             foreach (var cd in r.Value)
             {
-                if (TryGetPath(cd.organ, cd.op, maxDeviation, true, out PathResult path))
+                Player.Log($"{cd.organ} > {cd.op} | {r.Key}");
+                if (TryGetPath(cd.organ, cd.op, maxDeviation, ignoreProteins: true, out PathResult path))
                 {                    
                     int dist = path.cells.Count;
                     var cells = path.cells.Select(x => x.position);
@@ -935,7 +937,7 @@ public class Navigation
                         deviation = maxDeviation,
                         path = cells.ToList(),
                         pathSet = cells.ToHashSet(),
-                    });                    
+                    });
                 }
             }
 
@@ -980,6 +982,7 @@ public class Navigation
             .Where(x => x.entity is Protein pEntity
                 && (types == null || types.Contains(pEntity.type))
                 && (includeHarvested || !pEntity.isHarvested)
+                && !map.Targeted.Contains(x)
                 && Map.Distance(organ.position, x.position) <= maxDistance)
             .ToArray();
 
@@ -1179,12 +1182,6 @@ public class AStar : IPathfinder
 
     public PathResult GetPath(Cell start, Cell end, int maxDeviation, bool ignoreProteins)
     {
-        // if the desintation is in a cell adjacent to facing tentacle we can early exit
-        if (IsAdjacentToFacingTentacle(end))
-        {
-            return null;
-        }
-
         openList.Clear();
         closedList.Clear();
 
