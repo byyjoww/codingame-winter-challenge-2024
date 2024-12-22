@@ -912,7 +912,7 @@ public class Navigation
 
     private void CalculatePathFromOrganToProtein(Cell start, Cell end, int maxDeviation)
     {
-        if (start.entity == null || !TryGetPath(start, end, maxDeviation, out var path))
+        if (start.entity == null || end.entity == null || !TryGetPath(start, end, maxDeviation, out var path))
         {
             return;
         }
