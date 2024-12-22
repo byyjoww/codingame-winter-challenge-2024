@@ -133,7 +133,7 @@ class Player
             {
                 Organism organism = playerOrganisms[i];
                 organism.Prepare();
-                organism.CollectClosestProtein();
+                organism.Act();
             }
 
             Player.Log($"End turn");
@@ -346,6 +346,13 @@ public class Cell
 public class Organism
 {
     private HashSet<int> organIds = new HashSet<int>();
+    private int minDistanceToHarvest = 1;
+    private int maxDistanceToHarvest = 10;
+    private int maxDeviationToHarvest = 10;
+
+    private int minDistanceToDefend = 1;
+    private int maxDistanceToDefend = 3;
+    private int maxDeviationToDefend = 3;
 
     public int id;
     public Organ root;
@@ -386,23 +393,44 @@ public class Organism
         actions = 1;
     }
 
-    public void CollectClosestProtein()
+    public void Act()
     {
-        if (navigation.TryFindNearestProtein(this, 1, 10, 10, desired, out Navigation.NavigationData navData))
+        // first priority is defense
+        if (navigation.TryFindNearestOpponent(this, minDistanceToDefend, maxDistanceToDefend, maxDeviationToDefend, out Navigation.NavigationData opponentNavData))
         {
-            if (HarvestProtein((Organ)navData.origin.entity, (Protein)navData.target.entity, navData.distance, navData.path))
+            Organ org = (Organ)opponentNavData.origin.entity;
+            Organ op = (Organ)opponentNavData.target.entity;
+            int distToOp = opponentNavData.distance;
+            List<Vector2> pathToOp = opponentNavData.path;
+            if (Defend(org,op, distToOp, pathToOp))
+            {
+                Player.Log($"Defending");
+                return;
+            }
+        }
+
+        // second priority is to harvest
+        if (navigation.TryFindNearestProtein(this, minDistanceToHarvest, maxDistanceToHarvest, maxDeviationToHarvest, desired, out Navigation.NavigationData proteinNavData))
+        {
+            Organ org = (Organ)proteinNavData.origin.entity;
+            Protein prot = (Protein)proteinNavData.target.entity;
+            int distToProt = proteinNavData.distance;
+            List<Vector2> pathToProt = proteinNavData.path;
+            if (HarvestProtein(org, prot, distToProt, pathToProt))
             {
                 Player.Log($"Harvesting protein");
                 return;
             }
         }
 
+        // last priority is to grow randomly
         if (TryGetRandomPositionForRandomOrgan(out var organ, out var target) && TryGrowAny(organ, target.position))
         {
-            Player.Log($"Growing");
+            Player.Log($"Growing randomly");
             return;
         }
         
+        // if no proteins or spaces left just wait for the game to end
         Player.Command("WAIT");
     }
 
@@ -454,6 +482,23 @@ public class Organism
         {
             if (TryGrowAny(organ, path[0]))
             {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool Defend(Organ organ, Organ op, int distance, List<Vector2> path)
+    {
+        Player.Log($"Closest opponent to {organ} is {op} | Distance: {distance} | Path: [{string.Join(", ", path)}]");
+        if (distance == 2 && CanGrow(OrganType.Tentacle))
+        {
+            Vector2 tentaclePos = path[0];
+            Vector2 tentacleDir = Vector2.Normalize(op.position - tentaclePos);
+            string dirKey = Map.GetDirectionKey(tentacleDir);
+            if (TryGrowTentacle(organ, tentaclePos, dirKey))
+            {                
                 return true;
             }
         }
@@ -610,13 +655,15 @@ public class Navigation
     // first string is organId
     // first integer is distance between organ and entity
     // second string is entityId
-    private Dictionary<string, SortedDictionary<int, Dictionary<string, NavigationData>>> organNavDict;
+    private Dictionary<string, SortedDictionary<int, Dictionary<string, NavigationData>>> organToProteinsNavDict;
+    private Dictionary<string, Dictionary<string, int>> opponentDistanceNavDict;
 
     public Navigation(Map map)
     {
         this.map = map;
         this.pathfinder = new AStar(map);      
-        organNavDict = new Dictionary<string, SortedDictionary<int, Dictionary<string, NavigationData>>>();
+        organToProteinsNavDict = new Dictionary<string, SortedDictionary<int, Dictionary<string, NavigationData>>>();
+        opponentDistanceNavDict = new Dictionary<string, Dictionary<string, int>>();
     }
 
     public void Refresh()
@@ -634,7 +681,7 @@ public class Navigation
 
         foreach (Organ organ in organism.organs)
         {
-            if (!organNavDict.TryGetValue(organ.id, out var scoreNavDict))
+            if (!organToProteinsNavDict.TryGetValue(organ.id, out var scoreNavDict))
             {
                 scoreNavDict = FindPathsToAllProteins(organ, maxDistance: maxDistance, maxDeviation: maxDeviation, includeHarvested: true);
             }
@@ -665,6 +712,68 @@ public class Navigation
         }
 
         return closest != null;
+    }
+
+    public bool TryFindNearestOpponent(Organism organism, int minDistance, int maxDistance, int maxDeviation, out NavigationData data)
+    {
+        var opponentOrgans = map.Cells
+            .Cast<Cell>()
+            .Where(x => x.entity is Organ oEntity && !oEntity.isPlayerOwned)
+            .Select(x => (Organ)x.entity)
+            .ToArray();
+
+        var ranking = new SortedDictionary<int, List<(Cell organ, Cell op)>>();       
+        foreach (var organ in organism.organs)
+        {
+            foreach (var op in opponentOrgans)
+            {
+                if (!opponentDistanceNavDict.TryGetValue(organ.id, out var opDict)
+                    || !opDict.TryGetValue(op.id, out int dist))
+                {
+                    opponentDistanceNavDict.TryAdd(organ.id, new Dictionary<string, int>());
+                    opponentDistanceNavDict[organ.id].TryAdd(op.id, Map.Distance(organ.position, op.position));
+
+                }
+
+                var organCell = map.GetCellAtEntityPosition(organ);
+                var opCell = map.GetCellAtEntityPosition(op);
+
+
+                int currentDistance = opponentDistanceNavDict[organ.id][op.id];
+                if (currentDistance > minDistance && currentDistance < maxDistance)
+                {
+                    var cellData = (organCell, opCell);
+                    ranking.TryAdd(currentDistance, new List<(Cell organ, Cell op)>());
+                    ranking[currentDistance].Add(cellData);
+                }
+            }
+        }
+
+        for (int i = 0; i < ranking.Count; i++)
+        {        
+            var r = ranking.ElementAt(i);
+            foreach (var cd in r.Value)
+            {
+                if (TryGetPath(cd.organ, cd.op, maxDeviation, out PathResult path))
+                {
+                    var cells = path.cells.Select(x => x.position);
+                    data = new NavigationData
+                    {
+                        origin = cd.organ,
+                        target = cd.op,
+                        distance = path.cells.Count,
+                        score = path.score,
+                        deviation = maxDeviation,
+                        path = cells.ToList(),
+                        pathSet = cells.ToHashSet(),
+                    };
+                    return true;
+                }
+            }
+        }
+
+        data = default;
+        return false;
     }
 
     private bool CachedSearchResultSelector(KeyValuePair<int, Dictionary<string, NavigationData>> kvp, int minDistance, HashSet<ProteinType> types)
@@ -706,8 +815,8 @@ public class Navigation
         }
 
         // in case we dont find any valid paths
-        organNavDict.TryAdd(organ.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
-        return organNavDict[organ.id];
+        organToProteinsNavDict.TryAdd(organ.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
+        return organToProteinsNavDict[organ.id];
     }
 
     private void CalculatePathFromOrganToProtein(Cell start, Cell end, int maxDeviation)
@@ -718,8 +827,8 @@ public class Navigation
         }
         
         var cells = path.cells.Select(x => x.position);
-        organNavDict.TryAdd(start.entity.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
-        organNavDict[start.entity.id].TryAdd(path.score, new Dictionary<string, NavigationData>());
+        organToProteinsNavDict.TryAdd(start.entity.id, new SortedDictionary<int, Dictionary<string, NavigationData>>());
+        organToProteinsNavDict[start.entity.id].TryAdd(path.score, new Dictionary<string, NavigationData>());
         var navData = new NavigationData
         {
             origin = start,
@@ -731,7 +840,7 @@ public class Navigation
             pathSet = cells.ToHashSet(),
         };
 
-        organNavDict[start.entity.id][path.score].TryAdd(end.entity.id, navData);
+        organToProteinsNavDict[start.entity.id][path.score].TryAdd(end.entity.id, navData);
     }
 
     private bool TryGetPath(Cell start, Cell end, int maxDeviation, out PathResult path)
@@ -749,9 +858,9 @@ public class Navigation
                 .Select(x => x.position)
                 .ToHashSet();
 
-            for (int i = 0; i < organNavDict.Count; i++)
+            for (int i = 0; i < organToProteinsNavDict.Count; i++)
             {
-                var distanceDict = organNavDict.ElementAt(i).Value;
+                var distanceDict = organToProteinsNavDict.ElementAt(i).Value;
                 for (int j = 0; j < distanceDict.Count; j++)
                 {
                     var distanceKvp = distanceDict.ElementAt(j);
@@ -795,12 +904,12 @@ public class Navigation
 
             foreach (var entity in entities)
             {
-                organNavDict.Remove(entity.id);
+                organToProteinsNavDict.Remove(entity.id);
             }
 
-            for (int i = 0; i < organNavDict.Count; i++)
+            for (int i = 0; i < organToProteinsNavDict.Count; i++)
             {
-                var distanceDict = organNavDict.ElementAt(i).Value;
+                var distanceDict = organToProteinsNavDict.ElementAt(i).Value;
                 for (int j = 0; j < distanceDict.Count; j++)
                 {
                     var distanceKvp = distanceDict.ElementAt(j);
@@ -843,9 +952,9 @@ public class Navigation
     {
         foreach (var pid in proteinIds)
         {
-            for (int i = 0; i < organNavDict.Count; i++)
+            for (int i = 0; i < organToProteinsNavDict.Count; i++)
             {
-                var distanceDict = organNavDict.ElementAt(i).Value;
+                var distanceDict = organToProteinsNavDict.ElementAt(i).Value;
                 for (int j = 0; j < distanceDict.Count; j++)
                 {
                     var distanceKvp = distanceDict.ElementAt(j);
