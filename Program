@@ -832,7 +832,6 @@ public class Navigation
                 var organCell = map.GetCellAtEntityPosition(organ);
                 var opCell = map.GetCellAtEntityPosition(op);
 
-
                 int currentDistance = opponentDistanceNavDict[organ.id][op.id];
                 if (currentDistance > minDistance && currentDistance < maxDistance)
                 {
@@ -850,19 +849,29 @@ public class Navigation
             foreach (var cd in r.Value)
             {
                 if (TryGetPath(cd.organ, cd.op, maxDeviation, true, out PathResult path))
-                {
+                {                    
+                    int dist = path.cells.Count;
+                    if (cd.op.entity is Organ oEntity 
+                        && oEntity.type == OrganType.Tentacle 
+                        && dist == 2
+                        && oEntity.direction == Map.GetDirectionKey(Vector2.Normalize(path.cells[0].position - path.cells[1].position)))
+                    {
+                        // cant build in front of existing tentacle facing our destination
+                        continue;
+                    }
+
                     var cells = path.cells.Select(x => x.position);
-                    navDataDict.TryAdd(path.cells.Count, new List<NavigationData>());
-                    navDataDict[path.cells.Count].Add(new NavigationData
+                    navDataDict.TryAdd(dist, new List<NavigationData>());
+                    navDataDict[dist].Add(new NavigationData
                     {
                         origin = cd.organ,
                         target = cd.op,
-                        distance = path.cells.Count,
+                        distance = dist,
                         score = path.score,
                         deviation = maxDeviation,
                         path = cells.ToList(),
                         pathSet = cells.ToHashSet(),
-                    });
+                    });                    
                 }
             }
 
