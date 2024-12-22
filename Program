@@ -466,7 +466,7 @@ public class Organism
 
     public void Act()
     {
-        // first priority is defense
+        // defense
         Player.AddComment("DEFENDING", clear: true);
         if (navigation.TryFindNearestOpponent(this, minDistanceToDefend, maxDistanceToDefend, maxDeviationToDefend, out Navigation.NavigationData opponentNavData))
         {
@@ -480,13 +480,13 @@ public class Organism
             }
         }
 
-        // second priority is to divide if we have collected enough proteins
+        // divide if we have collected enough proteins
         if (desired.Count == 0)
         {
             Player.AddComment("READY TO SPORE", persistent: true);
         }
 
-        // second priority is to harvest
+        // harvest
         Player.AddComment("HARVESTING", clear: true);
         if (navigation.TryFindNearestProtein(this, minDistanceToHarvest, maxDistanceToHarvest, maxDeviationToHarvest, desired, out Navigation.NavigationData proteinNavData))
         {
@@ -500,12 +500,22 @@ public class Organism
             }
         }
 
-        // last priority is to expand
-        Player.AddComment("EXPANDING", clear: true);
-        if (TryGetRandomPositionForRandomOrgan(out var organ, out var target))
+        // expand to empty tiles
+        Player.AddComment("EXPANDING EMPTY", clear: true);
+        if (TryGetRandomPositionForRandomOrgan(out var organ, out var target, ignoreProteins: false))
         {          
             var dirs = map.GetUnoccupiedDirections(target.position);
             if (TryGrowAny(organ, target.position, dirs.FirstOrDefault()))
+            {
+                return;
+            }            
+        }
+
+        // if we want expand onto empty tiles, start occupying tiles containing proteins we harvest
+        Player.AddComment("EXPANDING ALL", clear: true);
+        if (TryGetRandomPositionForRandomOrgan(out organ, out target, ignoreProteins: true))
+        {
+            if (TryGrowAny(organ, target.position, string.Empty))
             {
                 return;
             }            
@@ -516,7 +526,7 @@ public class Organism
         Player.Command("WAIT");       
     }
 
-    private bool TryGetRandomPositionForRandomOrgan(out Organ organ, out Cell target)
+    private bool TryGetRandomPositionForRandomOrgan(out Organ organ, out Cell target, bool ignoreProteins = false)
     {
         foreach (var o in organs)
         {
@@ -524,7 +534,7 @@ public class Organism
             var neighbours = map.GetNeighbours(cell);
             foreach (var n in neighbours)
             {
-                if (n.isEmpty)
+                if (n.isEmpty || (ignoreProteins && n.entity is Protein))
                 {
                     organ = o;
                     target = n;
@@ -839,7 +849,7 @@ public class Navigation
             var navDataDict = new SortedDictionary<int, List<NavigationData>>();
             foreach (var cd in r.Value)
             {
-                if (TryGetPath(cd.organ, cd.op, maxDeviation, out PathResult path))
+                if (TryGetPath(cd.organ, cd.op, maxDeviation, true, out PathResult path))
                 {
                     var cells = path.cells.Select(x => x.position);
                     navDataDict.TryAdd(path.cells.Count, new List<NavigationData>());
@@ -912,7 +922,7 @@ public class Navigation
 
     private void CalculatePathFromOrganToProtein(Cell start, Cell end, int maxDeviation)
     {
-        if (start.entity == null || end.entity == null || !TryGetPath(start, end, maxDeviation, out var path))
+        if (start.entity == null || end.entity == null || !TryGetPath(start, end, maxDeviation, false, out var path))
         {
             return;
         }
@@ -934,9 +944,9 @@ public class Navigation
         organToProteinsNavDict[start.entity.id][path.score].TryAdd(end.entity.id, navData);
     }
 
-    private bool TryGetPath(Cell start, Cell end, int maxDeviation, out PathResult path)
+    private bool TryGetPath(Cell start, Cell end, int maxDeviation, bool ignoreProteins, out PathResult path)
     {
-        path = pathfinder.GetPath(start, end, maxDeviation);
+        path = pathfinder.GetPath(start, end, maxDeviation, ignoreProteins);
         return path != null;
     }
 
@@ -1063,7 +1073,7 @@ public class Navigation
 
 public interface IPathfinder
 {
-    PathResult GetPath(Cell start, Cell end, int maxDeviation);
+    PathResult GetPath(Cell start, Cell end, int maxDeviation, bool ignoreProteins);
 }
 
 public class PathResult
@@ -1094,7 +1104,7 @@ public class AStar : IPathfinder
         closedList = new HashSet<Cell>();
     }
 
-    public PathResult GetPath(Cell start, Cell end, int maxDeviation)
+    public PathResult GetPath(Cell start, Cell end, int maxDeviation, bool ignoreProteins)
     {
         openList.Clear();
         closedList.Clear();
@@ -1134,7 +1144,7 @@ public class AStar : IPathfinder
                     continue;
                 }
 
-                int tentativeGCost = currentNode.GCost + GetMovementCost(currentNode.Cell, neighbor);
+                int tentativeGCost = currentNode.GCost + GetMovementCost(currentNode.Cell, neighbor, ignoreProteins);
 
                 // If the neighbor is not in the open list, or we found a shorter path to it
                 var neighborNode = new Node
@@ -1182,9 +1192,9 @@ public class AStar : IPathfinder
         return Map.Distance(cell.position, end.position);
     }
 
-    private int GetMovementCost(Cell from, Cell to)
+    private int GetMovementCost(Cell from, Cell to, bool ignoreProteins)
     {
-        if (to.entity != null && to.entity is Protein pEntity)
+        if (!ignoreProteins && to.entity != null && to.entity is Protein pEntity)
         {
             return pEntity.isHarvested 
                 ? 15 
