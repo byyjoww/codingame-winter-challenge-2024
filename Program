@@ -636,7 +636,7 @@ public class Organism
 
     private bool HarvestProtein(Organ organ, Protein protein, int distance, List<Vector2> path)
     {
-        Player.Log($"Closest protein to {organ} is {protein} | Distance: {distance} | Path: [{string.Join(", ", path)}]");
+        // Player.Log($"Closest protein to {organ} is {protein} | Distance: {distance} | Path: [{string.Join(", ", path)}]");
         if (distance == 2 && CanGrow(OrganType.Harvester))
         {
             Vector2 harvesterPos = path[0];
@@ -671,7 +671,7 @@ public class Organism
 
     private bool Defend(Organ organ, Organ op, int distance, List<Vector2> path)
     {
-        Player.Log($"Closest opponent to {organ} is {op} | Distance: {distance} | Path: [{string.Join(", ", path)}]");
+        // Player.Log($"Closest opponent to {organ} is {op} | Distance: {distance} | Path: [{string.Join(", ", path)}]");
         if (distance == 2 && CanGrow(OrganType.Tentacle))
         {
             Vector2 tentaclePos = path[0];
@@ -946,8 +946,7 @@ public class Navigation
             var r = ranking.ElementAt(i);
             var navDataDict = new SortedDictionary<int, List<NavigationData>>();            
             foreach (var cd in r.Value)
-            {
-                Player.Log($"{cd.organ} > {cd.op} | {r.Key}");
+            {                
                 if (TryGetPath(cd.organ, cd.op, maxDeviation, ignoreProteins: true, out PathResult path))
                 {                    
                     int dist = path.cells.Count;
