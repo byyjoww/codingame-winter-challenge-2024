@@ -210,8 +210,8 @@ public class Map
     public List<IEntity> OnEntitiesRemoved;
     public HashSet<string> OnProteinsHarvested;
 
-    private static Dictionary<Vector2, string> directionVectorsToKeys;
-    private static Dictionary<string, Vector2> directionKeysToVectors = new Dictionary<string, Vector2>
+    public static Dictionary<Vector2, string> directionVectorsToKeys;
+    public static Dictionary<string, Vector2> directionKeysToVectors = new Dictionary<string, Vector2>
     {
         { "N", new Vector2(0, -1) }, // Up
         { "S", new Vector2(0, 1) },  // Down
@@ -555,9 +555,28 @@ public class Organism
         }
 
         // divide if we have collected enough proteins
-        if (desired.Count == 0)
+        if (desired.Count == 0 || proteins.HasAll(4))
         {
-            Player.AddComment("READY TO SPORE", persistent: true);
+            Player.AddComment("[RTS]", persistent: true);
+            Player.AddComment("SPORING", clear: true);
+            if (navigation.TryGetSporerAndLocation(this, 2, out Organ sporer, out Vector2 sporePos))
+            {
+                Player.Log($"found sporer {sporer} and location {sporePos}");
+                if (Spore(sporer, sporePos))
+                {
+                    return;
+                }                
+            }
+
+            Player.AddComment("GROWING SPORER", clear: true);
+            if (CanGrow(OrganType.Sporer) 
+                && navigation.TryGetSporerLocation(this, 2, out Organ parent, out Vector2 sporerPos, out string sporerDir))
+            {
+                if (TryGrowSporer(parent, sporerPos, sporerDir))
+                {
+                    return;
+                }
+            }
         }
 
         // harvest
@@ -732,7 +751,7 @@ public class Organism
     public bool CanSpore(Organ organ)
     {
         return organ.type == OrganType.Sporer
-            && actions > 1
+            && actions >= 1
             && proteins.a > 0
             && proteins.b > 0
             && proteins.c > 0
@@ -760,8 +779,8 @@ public class Organism
         }
 
         PaySporeCosts();
-        Player.Log($"Organ {organ.id} (organism {id}) is sporing a root from {organ.position} to {destination}");
-        Player.Command($"SPORE {organ.id} {destination.X} {destination.Y}");
+        Player.Log($"Organ {organ.organId} (organism {id}) is sporing a root from {organ.position} to {destination}");
+        Player.Command($"SPORE {organ.organId} {destination.X} {destination.Y}");
         return true;
     }
 
@@ -950,6 +969,97 @@ public class Navigation
 
         data = default;
         return false;
+    }
+
+    public bool TryGetSporerAndLocation(Organism organism, int minDistance, out Organ organ, out Vector2 location)
+    {
+        var sporers = organism.organs
+            .Where(x => x.type == OrganType.Sporer)
+            .ToArray();
+
+        Organ? longest = default;
+        Vector2 longestPos = default;
+        int longestDist = minDistance;
+        foreach (var sporer in sporers)
+        {
+            foreach (var dir in Map.directionKeysToVectors.Keys)
+            {
+                var cell = map.GetCellAtEntityPosition(sporer);
+                var raycastHit = Raycast(cell, dir);
+                if (raycastHit.distance >= longestDist)
+                {
+                    longest = sporer;
+                    longestPos = raycastHit.hit.position;
+                    longestDist = raycastHit.distance;
+                }
+            }
+        }
+
+        organ = longest.HasValue 
+            ? longest.Value 
+            : default;
+        location = longestPos;
+        return longest.HasValue;
+    }
+
+    public bool TryGetSporerLocation(Organism organism, int minDistance, out Organ organ, out Vector2 position, out string direction)
+    {
+        Organ? longest = default;
+        Vector2 longestPos = default;
+        string longestDir = default;
+        int longestDist = minDistance;
+        foreach (var org in organism.organs)
+        {
+            var cell = map.GetCellAtEntityPosition(org);
+            foreach (var neighbour in map.GetNeighbours(cell))
+            {
+                if (neighbour.entity != null && neighbour.entity.isObstacle)
+                {
+                    continue;
+                }
+                
+                foreach (var dir in Map.directionKeysToVectors.Keys)
+                {
+                    var raycastHit = Raycast(cell, dir);
+                    if (raycastHit.distance >= longestDist)
+                    {
+                        longestDist = raycastHit.distance;
+                        longest = org;
+                        longestPos = neighbour.position;
+                        longestDir = dir;
+                    }
+                }
+            }
+        }
+
+        organ = longest.HasValue ? longest.Value : default;
+        position = longestPos;
+        direction = longestDir;
+        return longest.HasValue;
+    }
+
+    private (Cell hit, List<Cell> path, int distance) Raycast(Cell origin, string dir)
+    {
+        Cell hit = null;
+        var path = new List<Cell>();
+        int distance = 0;
+
+        Cell last = origin;
+        while(last != null)
+        {
+            var neighbour = map.GetCellForPositionAtDirection(last, dir);
+            if (neighbour == null || (neighbour.entity != null && neighbour.entity.isObstacle))
+            {
+                hit = last;
+                return (hit, path, distance);
+            }
+            
+            distance++;
+            last = neighbour;
+            path.Add(neighbour);
+        }
+
+        return default;
     }
 
     private bool CachedSearchResultSelector(KeyValuePair<int, Dictionary<string, NavigationData>> kvp, int minDistance, HashSet<ProteinType> types)
@@ -1346,6 +1456,14 @@ public class ProteinReserve
     public int b;
     public int c;
     public int d;
+
+    public bool HasAll(int amount)
+    {
+        return a >= amount
+            && b >= amount
+            && c >= amount
+            && d >= amount;
+    }
 }
 
 public enum OrganType
