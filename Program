@@ -22,6 +22,7 @@ class Player
 
         Map map = new Map(width, height);
         List<Organism> organisms = new List<Organism>();
+        HashSet<Vector2> intents = new HashSet<Vector2>();
 
         ProteinReserve playerProteins = new ProteinReserve();
         ProteinReserve opponentProteins = new ProteinReserve();
@@ -269,6 +270,7 @@ public class Map
         foreach (var cell in cells)
         {
             cell.isDirty = true;
+            cell.isTarget = false;
         }
 
         foreach (var entity in entities)
@@ -377,7 +379,12 @@ public class Map
 
     public Cell GetCellAtEntityPosition(IEntity entity)
     {
-        return cells[(int)entity.position.X, (int)entity.position.Y];
+        return GetCellAtPosition(entity.position);
+    }
+
+    public Cell GetCellAtPosition(Vector2 position)
+    {
+        return cells[(int)position.X, (int)position.Y];
     }
 
     public string[] GetUnoccupiedDirections(Vector2 position, bool includeOpponentOrgans = false)
@@ -457,8 +464,11 @@ public class Cell
 {
     public Vector2 position;
     public IEntity entity;
+    public bool isTarget;
     public bool isDirty;
+
     public bool isEmpty => entity == null;
+    public bool hasObstacle => isTarget || (!isEmpty && entity.isObstacle);
 
     public override string ToString()
     {
@@ -756,7 +766,7 @@ public class Organism
 
     private bool Grow(Organ organ, OrganType growthType, Vector2 destination, string direction)
     {
-        if (!CanGrow(growthType))
+        if (!CanGrow(growthType) || HasIntent(destination))
         {
             return false;
         }
@@ -764,12 +774,13 @@ public class Organism
         PayGrowthCosts(growthType);
         Player.Log($"Organ {organ.organId} (organism {id}) is growing a {growthType} from {organ.position} to {destination} facing {direction}");
         Player.Command($"GROW {organ.organId} {destination.X} {destination.Y} {growthType.ToString().ToUpper()} {direction}"/*, $"GROWING {growthType}"*/);
+        AddIntent(destination);
         return true;
     }
 
     public bool Spore(Organ organ, Vector2 destination)
     {
-        if (!CanSpore(organ))
+        if (!CanSpore(organ) || HasIntent(destination))
         {
             return false;
         }
@@ -777,6 +788,7 @@ public class Organism
         PaySporeCosts();
         Player.Log($"Organ {organ.organId} (organism {id}) is sporing a root from {organ.position} to {destination}");
         Player.Command($"SPORE {organ.organId} {destination.X} {destination.Y}");
+        AddIntent(destination);
         return true;
     }
 
@@ -811,6 +823,16 @@ public class Organism
         proteins.c--;
         proteins.d--;
         actions--;
+    }
+
+    private bool HasIntent(Vector2 destination)
+    {
+        return map.GetCellAtPosition(destination).isTarget;
+    }
+
+    private void AddIntent(Vector2 destination)
+    {
+        map.GetCellAtPosition(destination).isTarget = true;
     }
 }
 
@@ -1030,7 +1052,7 @@ public class Navigation
             var cell = map.GetCellAtEntityPosition(org);
             foreach (var neighbour in map.GetNeighbours(cell))
             {
-                if (neighbour.entity != null && neighbour.entity.isObstacle)
+                if (neighbour.entity != null && neighbour.hasObstacle)
                 {
                     continue;
                 }
@@ -1066,7 +1088,7 @@ public class Navigation
         while(last != null)
         {
             var neighbour = map.GetCellForPositionAtDirection(last, dir);
-            if (neighbour == null || (neighbour.entity != null && neighbour.entity.isObstacle))
+            if (neighbour == null || (neighbour.entity != null && neighbour.hasObstacle))
             {
                 hit = last;
                 return new RaycastHit
@@ -1096,7 +1118,7 @@ public class Navigation
         while(last != null)
         {
             var neighbour = map.GetCellForPositionAtDirection(last, dir);
-            if (neighbour == null || (neighbour.entity != null && neighbour.entity.isObstacle))
+            if (neighbour == null || (neighbour.entity != null && neighbour.hasObstacle))
             {                
                 return paths;
             }
@@ -1378,7 +1400,7 @@ public class AStar : IPathfinder
             foreach (var neighbor in GetNeighbours(currentNode.Cell))
             {
                 bool isDestination = neighbor == end;
-                bool isObstacle = (neighbor.entity != null && neighbor.entity.isObstacle);      
+                bool isObstacle = (neighbor.entity != null && neighbor.hasObstacle);      
                 bool isTooFar = GetHCost(neighbor, start) > maxDeviation;
                 if (!isDestination && (isObstacle || isTooFar || IsAdjacentToFacingTentacle(neighbor) || closedList.Contains(neighbor)))
                 {
