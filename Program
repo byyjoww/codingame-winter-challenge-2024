@@ -1056,10 +1056,7 @@ public class Navigation
 
     public bool TryGetSporerLocation(Organism organism, int minDistanceFromOrigin, int minDistanceFromSelf, int minDistanceFromOpponent, out Organ organ, out Vector2 position, out string direction)
     {
-        Organ? longest = default;
-        Vector2 longestPos = default;
-        string longestDir = default;
-        int longestDist = minDistanceFromOrigin;
+        var ranking = new SortedDictionary<int, List<(Organ parent, Vector2 position, string direction)>>();
         foreach (var org in organism.organs)
         {
             var cell = map.GetCellAtEntityPosition(org);
@@ -1069,29 +1066,43 @@ public class Navigation
                 {
                     continue;
                 }
-                
+
                 foreach (var dir in Map.directionKeysToVectors.Keys)
                 {
-                    var raycastHit = Raycast(cell, dir);
-                    int closestPlayerDist = map.GetDistanceToClosestOrgan(raycastHit.target, isPlayerOrgan: true);
-                    int closestOpponentDist = map.GetDistanceToClosestOrgan(raycastHit.target, isPlayerOrgan: false);
-                    if (raycastHit.distance >= longestDist 
-                        && closestPlayerDist >= minDistanceFromSelf 
-                        && closestOpponentDist >= minDistanceFromOpponent)
+                    var raycastHits = RaycastAll(cell, dir);
+                    foreach (var hit in raycastHits)
                     {
-                        longestDist = raycastHit.distance;
-                        longest = org;
-                        longestPos = neighbour.position;
-                        longestDir = dir;
+                        if (hit.distance >= minDistanceFromOrigin)
+                        {
+                            int closestPlayerDist = map.GetDistanceToClosestOrgan(hit.target, isPlayerOrgan: true);
+                            int closestOpponentDist = map.GetDistanceToClosestOrgan(hit.target, isPlayerOrgan: false);
+                            if (closestPlayerDist >= minDistanceFromSelf
+                                && closestOpponentDist >= minDistanceFromOpponent)
+                            {
+                                int score = GetSporerLocationScore(hit, closestPlayerDist, closestOpponentDist);
+                                ranking.TryAdd(score, new List<(Organ, Vector2, string)>());
+                                ranking[score].Add((org, neighbour.position, dir));
+                            }
+                        }
                     }
                 }
             }
         }
 
-        organ = longest.HasValue ? longest.Value : default;
-        position = longestPos;
-        direction = longestDir;
-        return longest.HasValue;
+        for (int i = ranking.Count; i --> 0; )
+        {
+            var r = ranking.ElementAt(i);
+            var result = r.Value.FirstOrDefault();
+            organ = result.parent;
+            position = result.position;
+            direction = result.direction;
+            return true;
+        }
+
+        organ = default;
+        position = default;
+        direction = default;
+        return false;
     }
 
     private int GetSporerLocationScore(RaycastHit hit, int closestPlayerDist, int closestOpponentDist)
@@ -1105,7 +1116,8 @@ public class Navigation
         int closestPlayerDistScore = closestPlayerDist * 2;
         int closestOpponentDistScore = Math.Min(closestOpponentDist, 4);
         int emptyNeighbourScore = numOfEmptyNeighbours * 2;
-        int score = distanceScore + closestPlayerDistScore + closestOpponentDistScore + emptyNeighbourScore;
+        int cellScore = hit.target.isEmpty ? 0 : 3;
+        int score = distanceScore + closestPlayerDistScore + closestOpponentDistScore + emptyNeighbourScore + cellScore;
         Player.Log($"Score: {hit.target} | {score} => {hit.distance} {(closestPlayerDist * 2)} {numOfEmptyNeighbours}");
         return score;
     }
