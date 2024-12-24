@@ -23,10 +23,9 @@ class Player
         Map map = new Map(width, height);
         List<Organism> organisms = new List<Organism>();
         HashSet<Vector2> intents = new HashSet<Vector2>();
-
         ProteinReserve playerProteins = new ProteinReserve();
         ProteinReserve opponentProteins = new ProteinReserve();
-
+        
         while (true)
         {
             // New round starts when we first read input     
@@ -94,7 +93,7 @@ class Player
                                 : null,
                         };
 
-                        organisms.Add(parentOrganism);
+                        organisms.Add(parentOrganism);                        
                     }
 
                     var organ = new Organ
@@ -139,6 +138,7 @@ class Player
                 }
             }
 
+            Organism.Total = organisms.Count;
             var playerOrganisms = organisms.Where(x => x.IsPlayerOwned).ToList();
             int requiredActionsCount = int.Parse(Console.ReadLine());
             for (int i = 0; i < requiredActionsCount; i++)
@@ -490,7 +490,7 @@ public class Cell
 }
 
 public class Organism
-{
+{    
     private HashSet<int> organIds = new HashSet<int>();    
 
     private int minDistanceToHarvest = 1;
@@ -505,6 +505,8 @@ public class Organism
     private int minNewSporingDistanceFromOrigin = 5;
     private int minNewSporingDistanceFromSelf = 3;
     private int minNewSporingDistanceFromOpponent = 3;
+
+    public static int Total = 0;
 
     public int id;
     public Organ root;
@@ -574,9 +576,9 @@ public class Organism
             }
         }
 
-        // divide if we have an existing sporer and collected enough proteins
-        if (desired.Count == 0 || proteins.HasAll(3))
-        {            
+        if (IsReadyToSpore())
+        {
+            // divide if we have an existing sporer and collected enough proteins
             Player.AddComment("SPORING", clear: true);
             if (navigation.TryGetSporerAndLocation(this, minExistingSporingDistanceFromOrigin, minExistingSporingDistanceFromSelf, minExistingSporingDistanceFromOpponent, out Organ sporer, out Vector2 sporePos))
             {
@@ -585,12 +587,9 @@ public class Organism
                 {
                     return;
                 }
-            }            
-        }
+            }
 
-        // grow a new sporer if we have collected enough proteins
-        if (desired.Count == 0 || proteins.HasAll(5))
-        {
+            // grow a new sporer if we have collected enough proteins
             Player.AddComment("GROWING SPORER", clear: true);
             if (CanGrow(OrganType.Sporer) 
                 && navigation.TryGetSporerLocation(this, minNewSporingDistanceFromOrigin, minNewSporingDistanceFromSelf, minNewSporingDistanceFromOpponent, out Organ parent, out Vector2 sporerPos, out string sporerDir))
@@ -643,6 +642,20 @@ public class Organism
         // if no proteins or spaces left just wait for the game to end
         Player.AddComment("WAITING", clear: true);
         Player.Command("WAIT");
+    }
+
+    private bool IsReadyToSpore()
+    {
+        if (Organism.Total == 0)
+        {
+            return desired.Count == 0 
+                || proteins.HasAll(6);
+        }
+        else
+        {
+            return proteins.HasAll(4) 
+                && (map.Harvested.Count / Organism.Total) > 2;
+        }
     }
 
     private bool TryGetRandomPositionForRandomOrgan(out Organ organ, out Cell target, bool ignoreProteins = false)
