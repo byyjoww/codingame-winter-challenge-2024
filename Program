@@ -549,8 +549,7 @@ public class Organism
 
         // divide if we have collected enough proteins
         if (desired.Count == 0 || proteins.HasAll(4))
-        {
-            Player.AddComment("[RTS]", persistent: true);
+        {            
             Player.AddComment("SPORING", clear: true);
             if (navigation.TryGetSporerAndLocation(this, minExistingSporingDistanceFromOrigin, minExistingSporingDistanceFromSelf, out Organ sporer, out Vector2 sporePos))
             {
