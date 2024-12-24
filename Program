@@ -547,8 +547,8 @@ public class Organism
             }
         }
 
-        // divide if we have collected enough proteins
-        if (desired.Count == 0 || proteins.HasAll(4))
+        // divide if we have an existing sporer and collected enough proteins
+        if (desired.Count == 0 || proteins.HasAll(3))
         {            
             Player.AddComment("SPORING", clear: true);
             if (navigation.TryGetSporerAndLocation(this, minExistingSporingDistanceFromOrigin, minExistingSporingDistanceFromSelf, out Organ sporer, out Vector2 sporePos))
@@ -558,8 +558,12 @@ public class Organism
                 {
                     return;
                 }
-            }
+            }            
+        }
 
+        // grow a new sporer if we have collected enough proteins
+        if (desired.Count == 0 || proteins.HasAll(4))
+        {
             Player.AddComment("GROWING SPORER", clear: true);
             if (CanGrow(OrganType.Sporer) 
                 && navigation.TryGetSporerLocation(this, minNewSporingDistanceFromOrigin, minNewSporingDistanceFromSelf, out Organ parent, out Vector2 sporerPos, out string sporerDir))
