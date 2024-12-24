@@ -131,6 +131,14 @@ class Player
 
             map.SetEntities(entities);
 
+            foreach (var entity in map.OnEntitiesRemoved)
+            {
+                if (entity is Organ oEntity && oEntity.type == OrganType.Root)
+                {
+                    organisms.RemoveAll(x => x.id == oEntity.organId);
+                }
+            }
+
             var playerOrganisms = organisms.Where(x => x.IsPlayerOwned).ToList();
             int requiredActionsCount = int.Parse(Console.ReadLine());
             for (int i = 0; i < requiredActionsCount; i++)
@@ -995,7 +1003,7 @@ public class Navigation
 
             if (navDataDict.Count > 0)
             {
-                data = navDataDict.First().Value.First();           
+                data = navDataDict.First().Value.First();        
                 return true;
             }
         }
