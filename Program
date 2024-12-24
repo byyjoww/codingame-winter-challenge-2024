@@ -470,12 +470,17 @@ public class Organism
 {
     private HashSet<int> organIds = new HashSet<int>();
     private int minDistanceToHarvest = 1;
-    private int maxDistanceToHarvest = 10;
-    private int maxDeviationToHarvest = 10;
+    private int maxDistanceToHarvest = 6;
+    private int maxDeviationToHarvest = 6;
 
     private int minDistanceToDefend = 1;
     private int maxDistanceToDefend = 3;
     private int maxDeviationToDefend = 3;
+
+    private int minExistingSporingDistanceFromOrigin = 3;
+    private int minExistingSporingDistanceFromSelf = 3;
+    private int minNewSporingDistanceFromOrigin = 5;
+    private int minNewSporingDistanceFromSelf = 3;
 
     public int id;
     public Organ root;
@@ -547,18 +552,18 @@ public class Organism
         {
             Player.AddComment("[RTS]", persistent: true);
             Player.AddComment("SPORING", clear: true);
-            if (navigation.TryGetSporerAndLocation(this, 3, 3, out Organ sporer, out Vector2 sporePos))
+            if (navigation.TryGetSporerAndLocation(this, minExistingSporingDistanceFromOrigin, minExistingSporingDistanceFromSelf, out Organ sporer, out Vector2 sporePos))
             {
                 Player.Log($"found sporer {sporer} and location {sporePos}");
                 if (Spore(sporer, sporePos))
                 {
                     return;
-                }                
+                }
             }
 
             Player.AddComment("GROWING SPORER", clear: true);
             if (CanGrow(OrganType.Sporer) 
-                && navigation.TryGetSporerLocation(this, 5, 3, out Organ parent, out Vector2 sporerPos, out string sporerDir))
+                && navigation.TryGetSporerLocation(this, minNewSporingDistanceFromOrigin, minNewSporingDistanceFromSelf, out Organ parent, out Vector2 sporerPos, out string sporerDir))
             {
                 if (TryGrowSporer(parent, sporerPos, sporerDir))
                 {
