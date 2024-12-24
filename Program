@@ -201,7 +201,6 @@ public class Map
     private int height; // between 8 and 12
     private HashSet<Cell> harvested;
     private HashSet<Cell> targeted;
-    private Dictionary<string, int> playerOrganDistance;
 
     public Cell[,] Cells => cells;
     public HashSet<Cell> Harvested => harvested;
@@ -225,7 +224,6 @@ public class Map
         cells = new Cell[width, height];
         harvested = new HashSet<Cell>();
         targeted = new HashSet<Cell>();
-        playerOrganDistance = new Dictionary<string, int>();
         this.width = cells.GetLength(0);
         this.height = cells.GetLength(1);
         directionVectorsToKeys = directionKeysToVectors.ToDictionary(kvp => kvp.Value, kvp => kvp.Key);
@@ -413,12 +411,7 @@ public class Map
         int closest = 9999;
         foreach (var organ in playerOrgans)
         {
-            if (!playerOrganDistance.TryGetValue(organ.id, out int distance))
-            {
-                distance = Map.Distance(organ.position, cell.position);
-                playerOrganDistance.Add(organ.id, distance);
-            }
-
+            int distance = Map.Distance(organ.position, cell.position);
             if (closest > distance)
             {
                 closest = distance;
@@ -554,7 +547,7 @@ public class Organism
         {
             Player.AddComment("[RTS]", persistent: true);
             Player.AddComment("SPORING", clear: true);
-            if (navigation.TryGetSporerAndLocation(this, 2, out Organ sporer, out Vector2 sporePos))
+            if (navigation.TryGetSporerAndLocation(this, 3, 3, out Organ sporer, out Vector2 sporePos))
             {
                 Player.Log($"found sporer {sporer} and location {sporePos}");
                 if (Spore(sporer, sporePos))
@@ -565,7 +558,7 @@ public class Organism
 
             Player.AddComment("GROWING SPORER", clear: true);
             if (CanGrow(OrganType.Sporer) 
-                && navigation.TryGetSporerLocation(this, 2, out Organ parent, out Vector2 sporerPos, out string sporerDir))
+                && navigation.TryGetSporerLocation(this, 5, 3, out Organ parent, out Vector2 sporerPos, out string sporerDir))
             {
                 if (TryGrowSporer(parent, sporerPos, sporerDir))
                 {
@@ -815,6 +808,19 @@ public class Organism
 
 public class Navigation
 {
+    public struct RaycastHit
+    {
+        public Cell origin;
+        public Cell target;
+        public List<Cell> path;
+        public int distance;
+
+        public override string ToString()
+        {
+            return $"{origin.position} => {target.position} | Distance: {distance} | Path: {string.Join(", ", path)}";
+        }
+    }
+
     public struct NavigationData
     {
         public Cell origin;
@@ -966,7 +972,7 @@ public class Navigation
         return false;
     }
 
-    public bool TryGetSporerAndLocation(Organism organism, int minDistance, out Organ organ, out Vector2 position)
+    public bool TryGetSporerAndLocation(Organism organism, int minDistanceFromOrigin, int minDistanceFromSelf, out Organ organ, out Vector2 position)
     {
         var sporers = organism.organs
             .Where(x => x.type == OrganType.Sporer)
@@ -975,18 +981,21 @@ public class Navigation
         var ranking = new SortedDictionary<int, List<(Organ organ, Vector2 position)>>();
         foreach (var sporer in sporers)
         {
-            foreach (var dir in Map.directionKeysToVectors.Keys)
+            var cell = map.GetCellAtEntityPosition(sporer);
+            var raycastHits = RaycastAll(cell, sporer.direction);
+            foreach (var hit in raycastHits)
             {
-                var cell = map.GetCellAtEntityPosition(sporer);
-                var raycastHit = Raycast(cell, dir);
-                if (raycastHit.distance >= minDistance)
+                if (hit.distance >= minDistanceFromOrigin)
                 {
-                    int closestDist = map.GetDistanceToClosestPlayerOrgan(raycastHit.hit);
-                    int score = raycastHit.distance + closestDist;
-                    ranking.TryAdd(score, new List<(Organ organ, Vector2 position)>());
-                    ranking[score].Add((sporer, raycastHit.hit.position));
+                    int closestDist = map.GetDistanceToClosestPlayerOrgan(hit.target);
+                    if (closestDist >= minDistanceFromSelf)
+                    {
+                         int score = hit.distance + (closestDist * 2);
+                        ranking.TryAdd(score, new List<(Organ organ, Vector2 position)>());
+                        ranking[score].Add((sporer, hit.target.position));
+                    }                   
                 }
-            }
+            } 
         }
 
         for (int i = ranking.Count; i --> 0; )
@@ -1003,12 +1012,12 @@ public class Navigation
         return false;
     }
 
-    public bool TryGetSporerLocation(Organism organism, int minDistance, out Organ organ, out Vector2 position, out string direction)
+    public bool TryGetSporerLocation(Organism organism, int minDistanceFromOrigin, int minDistanceFromSelf, out Organ organ, out Vector2 position, out string direction)
     {
         Organ? longest = default;
         Vector2 longestPos = default;
         string longestDir = default;
-        int longestDist = minDistance;
+        int longestDist = minDistanceFromOrigin;
         foreach (var org in organism.organs)
         {
             var cell = map.GetCellAtEntityPosition(org);
@@ -1022,7 +1031,8 @@ public class Navigation
                 foreach (var dir in Map.directionKeysToVectors.Keys)
                 {
                     var raycastHit = Raycast(cell, dir);
-                    if (raycastHit.distance >= longestDist)
+                    int closestDist = map.GetDistanceToClosestPlayerOrgan(raycastHit.target);
+                    if (raycastHit.distance >= longestDist && closestDist >= minDistanceFromSelf)
                     {
                         longestDist = raycastHit.distance;
                         longest = org;
@@ -1039,7 +1049,7 @@ public class Navigation
         return longest.HasValue;
     }
 
-    private (Cell hit, List<Cell> path, int distance) Raycast(Cell origin, string dir)
+    private RaycastHit Raycast(Cell origin, string dir)
     {
         Cell hit = null;
         var path = new List<Cell>();
@@ -1052,12 +1062,49 @@ public class Navigation
             if (neighbour == null || (neighbour.entity != null && neighbour.entity.isObstacle))
             {
                 hit = last;
-                return (hit, path, distance);
+                return new RaycastHit
+                {
+                    origin = origin,
+                    target = hit,
+                    path = path,
+                    distance = distance,
+                };
             }
             
             distance++;
             last = neighbour;
             path.Add(neighbour);
+        }
+
+        return default;
+    }
+
+    private List<RaycastHit> RaycastAll(Cell origin, string dir)
+    {
+        List<RaycastHit> paths = new List<RaycastHit>();
+
+        var path = new List<Cell>();
+        int distance = 1;
+        Cell last = origin;
+        while(last != null)
+        {
+            var neighbour = map.GetCellForPositionAtDirection(last, dir);
+            if (neighbour == null || (neighbour.entity != null && neighbour.entity.isObstacle))
+            {                
+                return paths;
+            }
+
+            paths.Add(new RaycastHit
+            {
+                origin = origin,
+                target = neighbour,
+                path = path,
+                distance = distance,
+            });
+
+            distance++;
+            last = neighbour;
+            path.Add(neighbour);            
         }
 
         return default;
