@@ -501,10 +501,10 @@ public class Organism
     private int maxDeviationToDefend = 3;
     private int minExistingSporingDistanceFromOrigin = 3;
     private int minExistingSporingDistanceFromSelf = 3;
-    private int minExistingSporingDistanceFromOpponent = 2;
+    private int minExistingSporingDistanceFromOpponent = 3;
     private int minNewSporingDistanceFromOrigin = 5;
     private int minNewSporingDistanceFromSelf = 3;
-    private int minNewSporingDistanceFromOpponent = 2;
+    private int minNewSporingDistanceFromOpponent = 3;
 
     public int id;
     public Organ root;
@@ -589,7 +589,7 @@ public class Organism
         }
 
         // grow a new sporer if we have collected enough proteins
-        if (desired.Count == 0 || proteins.HasAll(4))
+        if (desired.Count == 0 || proteins.HasAll(5))
         {
             Player.AddComment("GROWING SPORER", clear: true);
             if (CanGrow(OrganType.Sporer) 
@@ -1032,7 +1032,7 @@ public class Navigation
                     if (closestPlayerDist >= minDistanceFromSelf 
                         && closestOpponentDist >= minDistanceFromOpponent)
                     {
-                        int score = GetSporerLocationScore(hit, closestPlayerDist, closestOpponentDist);
+                        int score = GetSporingLocationScore(hit, closestPlayerDist, closestOpponentDist);
                         ranking.TryAdd(score, new List<(Organ organ, Vector2 position)>());
                         ranking[score].Add((sporer, hit.target.position));
                     }                   
@@ -1069,7 +1069,7 @@ public class Navigation
 
                 foreach (var dir in Map.directionKeysToVectors.Keys)
                 {
-                    var raycastHits = RaycastAll(cell, dir);
+                    var raycastHits = RaycastAll(neighbour, dir);
                     foreach (var hit in raycastHits)
                     {
                         if (hit.distance >= minDistanceFromOrigin)
@@ -1078,8 +1078,10 @@ public class Navigation
                             int closestOpponentDist = map.GetDistanceToClosestOrgan(hit.target, isPlayerOrgan: false);
                             if (closestPlayerDist >= minDistanceFromSelf
                                 && closestOpponentDist >= minDistanceFromOpponent)
-                            {
-                                int score = GetSporerLocationScore(hit, closestPlayerDist, closestOpponentDist);
+                            {                                
+                                int score = GetSporingLocationScore(hit, closestPlayerDist, closestOpponentDist) 
+                                    + GetSporerLocationScore(neighbour);
+                                Player.Log($"Score for {org} {neighbour.position} {dir}: {score}");
                                 ranking.TryAdd(score, new List<(Organ, Vector2, string)>());
                                 ranking[score].Add((org, neighbour.position, dir));
                             }
@@ -1105,7 +1107,18 @@ public class Navigation
         return false;
     }
 
-    private int GetSporerLocationScore(RaycastHit hit, int closestPlayerDist, int closestOpponentDist)
+    private int GetSporerLocationScore(Cell cell)
+    {
+        return cell.isEmpty 
+            ? 15 
+            : cell.entity is Protein pEntity 
+                ? pEntity.isHarvested 
+                    ? 0 
+                    : 5
+                : 15;
+    }
+
+    private int GetSporingLocationScore(RaycastHit hit, int closestPlayerDist, int closestOpponentDist)
     {
         int numOfEmptyNeighbours = map
             .GetNeighbours(hit.target)
@@ -1118,7 +1131,7 @@ public class Navigation
         int emptyNeighbourScore = numOfEmptyNeighbours * 2;
         int cellScore = hit.target.isEmpty ? 0 : 3;
         int score = distanceScore + closestPlayerDistScore + closestOpponentDistScore + emptyNeighbourScore + cellScore;
-        Player.Log($"Score: {hit.target} | {score} => {hit.distance} {(closestPlayerDist * 2)} {numOfEmptyNeighbours}");
+        // Player.Log($"Score: {hit.target} | {score} => {hit.distance} {(closestPlayerDist * 2)} {numOfEmptyNeighbours}");
         return score;
     }
 
