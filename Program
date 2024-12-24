@@ -981,10 +981,10 @@ public class Navigation
                 var raycastHit = Raycast(cell, dir);
                 if (raycastHit.distance >= minDistance)
                 {
-                    int closestDist = map.GetDistanceToClosestPlayerOrgan(raycastHit.hit.position);
+                    int closestDist = map.GetDistanceToClosestPlayerOrgan(raycastHit.hit);
                     int score = raycastHit.distance + closestDist;
                     ranking.TryAdd(score, new List<(Organ organ, Vector2 position)>());
-                    ranking[score].Add((sporer, raycastHit.hit.position));        
+                    ranking[score].Add((sporer, raycastHit.hit.position));
                 }
             }
         }
