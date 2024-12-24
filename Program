@@ -137,9 +137,10 @@ class Player
                     organisms.RemoveAll(x => x.id == oEntity.organId);
                 }
             }
-
-            Organism.Total = organisms.Count;
+            
             var playerOrganisms = organisms.Where(x => x.IsPlayerOwned).ToList();
+            Organism.PlayerTotal = playerOrganisms.Count;
+
             int requiredActionsCount = int.Parse(Console.ReadLine());
             for (int i = 0; i < requiredActionsCount; i++)
             {
@@ -506,7 +507,7 @@ public class Organism
     private int minNewSporingDistanceFromSelf = 3;
     private int minNewSporingDistanceFromOpponent = 3;
 
-    public static int Total = 0;
+    public static int PlayerTotal = 0;
 
     public int id;
     public Organ root;
@@ -646,15 +647,15 @@ public class Organism
 
     private bool IsReadyToSpore()
     {
-        if (Organism.Total == 1)
+        if (Organism.PlayerTotal == 1)
         {
-            return desired.Count == 0 
+            return desired.Count == 0
                 || proteins.HasAll(6);
         }
         else
         {
             return proteins.HasAll(4) 
-                && (map.Harvested.Count / Organism.Total) > 2;
+                && (map.Harvested.Count / Organism.PlayerTotal) > 2;
         }
     }
 
