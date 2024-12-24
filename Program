@@ -201,6 +201,7 @@ public class Map
     private int height; // between 8 and 12
     private HashSet<Cell> harvested;
     private HashSet<Cell> targeted;
+    private Dictionary<string, int> playerOrganDistance;
 
     public Cell[,] Cells => cells;
     public HashSet<Cell> Harvested => harvested;
@@ -224,6 +225,7 @@ public class Map
         cells = new Cell[width, height];
         harvested = new HashSet<Cell>();
         targeted = new HashSet<Cell>();
+        playerOrganDistance = new Dictionary<string, int>();
         this.width = cells.GetLength(0);
         this.height = cells.GetLength(1);
         directionVectorsToKeys = directionKeysToVectors.ToDictionary(kvp => kvp.Value, kvp => kvp.Key);
@@ -368,39 +370,6 @@ public class Map
                 }
             }
         }
-       
-        // for (int x = 0; x < width; x++)
-        // {
-        //     for (int y = 0; y < height; y++)
-        //     {
-        //         var cell = cells[x, y];                
-        //         if (cell.entity is Organ oEntity) 
-        //         {
-        //             if (oEntity.type == OrganType.Harvester
-        //                 && oEntity.isPlayerOwned)
-        //             {
-        //                 var facing = GetCellForPositionAtDirection(cell, oEntity.direction);
-        //                 if (facing != null && facing.entity is Protein pEntity)
-        //                 {
-        //                     pEntity.isHarvested = true;
-        //                     facing.entity = pEntity;
-        //                     harvestedIds.Add(facing.entity.id);
-        //                     harvested.Add(facing);
-        //                 }
-        //             }
-
-        //             if (oEntity.type == OrganType.Tentacle
-        //                 && !oEntity.isPlayerOwned)
-        //             {
-        //                 var facing = GetCellForPositionAtDirection(cell, oEntity.direction);
-        //                 if (facing != null && !(facing.entity is Wall))
-        //                 {
-        //                     targeted.Add(facing);
-        //                 }
-        //             }
-        //         }                
-        //     }
-        // }
 
         harvested.RemoveWhere(x => !(x.entity is Protein));
         OnEntitiesAdded = addedEntities;
@@ -431,6 +400,32 @@ public class Map
         }
 
         return unoccupiedDirections.ToArray();
+    }
+
+    public int GetDistanceToClosestPlayerOrgan(Cell cell)
+    {
+        var playerOrgans = cells
+            .Cast<Cell>()
+            .Where(x => !x.isEmpty && x.entity is Organ oEntity && oEntity.isPlayerOwned)
+            .Select(x => (Organ)x.entity)
+            .ToArray();
+
+        int closest = 9999;
+        foreach (var organ in playerOrgans)
+        {
+            if (!playerOrganDistance.TryGetValue(organ.id, out int distance))
+            {
+                distance = Map.Distance(organ.position, cell.position);
+                playerOrganDistance.Add(organ.id, distance);
+            }
+
+            if (closest > distance)
+            {
+                closest = distance;
+            }
+        }
+
+        return closest;
     }
 
     public Cell GetCellForPositionAtDirection(Cell cell, string direction)
@@ -909,7 +904,7 @@ public class Navigation
             .Select(x => (Organ)x.entity)
             .ToArray();
 
-        var ranking = new SortedDictionary<int, List<(Cell organ, Cell op)>>();       
+        var ranking = new SortedDictionary<int, List<(Cell organ, Cell op)>>();
         foreach (var organ in organism.organs)
         {
             foreach (var op in opponentOrgans)
@@ -971,35 +966,41 @@ public class Navigation
         return false;
     }
 
-    public bool TryGetSporerAndLocation(Organism organism, int minDistance, out Organ organ, out Vector2 location)
+    public bool TryGetSporerAndLocation(Organism organism, int minDistance, out Organ organ, out Vector2 position)
     {
         var sporers = organism.organs
             .Where(x => x.type == OrganType.Sporer)
             .ToArray();
 
-        Organ? longest = default;
-        Vector2 longestPos = default;
-        int longestDist = minDistance;
+        var ranking = new SortedDictionary<int, List<(Organ organ, Vector2 position)>>();
         foreach (var sporer in sporers)
         {
             foreach (var dir in Map.directionKeysToVectors.Keys)
             {
                 var cell = map.GetCellAtEntityPosition(sporer);
                 var raycastHit = Raycast(cell, dir);
-                if (raycastHit.distance >= longestDist)
+                if (raycastHit.distance >= minDistance)
                 {
-                    longest = sporer;
-                    longestPos = raycastHit.hit.position;
-                    longestDist = raycastHit.distance;
+                    int closestDist = map.GetDistanceToClosestPlayerOrgan(raycastHit.hit.position);
+                    int score = raycastHit.distance + closestDist;
+                    ranking.TryAdd(score, new List<(Organ organ, Vector2 position)>());
+                    ranking[score].Add((sporer, raycastHit.hit.position));        
                 }
             }
         }
 
-        organ = longest.HasValue 
-            ? longest.Value 
-            : default;
-        location = longestPos;
-        return longest.HasValue;
+        for (int i = ranking.Count; i --> 0; )
+        {
+            var r = ranking.ElementAt(i);
+            var result = r.Value.FirstOrDefault();
+            organ = result.organ;
+            position = result.position;
+            return true;
+        }
+
+        organ = default;
+        position = default;
+        return false;
     }
 
     public bool TryGetSporerLocation(Organism organism, int minDistance, out Organ organ, out Vector2 position, out string direction)
