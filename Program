@@ -131,13 +131,18 @@ class Player
 
             map.SetEntities(entities);
 
-            var playerOrganisms = organisms.Where(x => x.isPlayerOwned).ToArray();
+            var playerOrganisms = organisms.Where(x => x.IsPlayerOwned).ToList();
             int requiredActionsCount = int.Parse(Console.ReadLine());
             for (int i = 0; i < requiredActionsCount; i++)
             {
                 Organism organism = playerOrganisms[i];
                 organism.Prepare();
                 organism.Act();
+            }
+
+            if (playerOrganisms.TrueForAll(x => x.hasNoMoreActions))
+            {
+                playerOrganisms.ForEach(y => y.expandIntoHarvestedProteins = true);
             }
 
             Player.Log($"End turn");
@@ -478,7 +483,8 @@ public class Cell
 
 public class Organism
 {
-    private HashSet<int> organIds = new HashSet<int>();
+    private HashSet<int> organIds = new HashSet<int>();    
+
     private int minDistanceToHarvest = 1;
     private int maxDistanceToHarvest = 6;
     private int maxDeviationToHarvest = 6;
@@ -498,9 +504,11 @@ public class Organism
     public ProteinReserve proteins;
     public Map map;
     public Navigation navigation;
-    public int actions = 1;
+    public int actions = 1;    
+    public bool hasNoMoreActions = false;
+    public bool expandIntoHarvestedProteins = false;
 
-    public bool isPlayerOwned => root.isPlayerOwned;
+    public bool IsPlayerOwned => root.isPlayerOwned;
 
     private HashSet<ProteinType> desired = new HashSet<ProteinType>()
     {
@@ -539,6 +547,7 @@ public class Organism
         organs.RemoveAll(x => organIdsToRemove.Contains(x.organId));
         navigation.Refresh();
         actions = 1;
+        hasNoMoreActions = false;
     }
 
     public void Act()
@@ -608,11 +617,14 @@ public class Organism
             {
                 return;
             }
-        }
+        }        
 
         // if we want expand onto empty tiles, start occupying tiles containing proteins we harvest
+        // only start occupying protein tiles if all organisms we control dont have additional actions
         Player.AddComment("EXPANDING ALL", clear: true);
-        if (TryGetRandomPositionForRandomOrgan(out organ, out target, ignoreProteins: true))
+        hasNoMoreActions = true;
+
+        if (expandIntoHarvestedProteins && TryGetRandomPositionForRandomOrgan(out organ, out target, ignoreProteins: true))
         {
             if (TryGrowAny(organ, target.position, string.Empty))
             {
@@ -662,15 +674,6 @@ public class Organism
             }
         }
         else
-        {
-            var dirs = map.GetUnoccupiedDirections(path[0]);
-            if (TryGrowAny(organ, path[0], dirs.FirstOrDefault()))
-            {
-                return true;
-            }
-        }
-
-        if (distance > 2)
         {
             var dirs = map.GetUnoccupiedDirections(path[0]);
             if (TryGrowAny(organ, path[0], dirs.FirstOrDefault()))
