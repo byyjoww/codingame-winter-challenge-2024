@@ -655,7 +655,7 @@ public class Organism
         else
         {
             return proteins.HasAll(4) 
-                && (map.Harvested.Count / Organism.PlayerTotal) > 2;
+                && (map.Harvested.Count / Organism.PlayerTotal) > 1.5;
         }
     }
 
