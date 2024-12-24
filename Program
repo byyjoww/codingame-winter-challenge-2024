@@ -1081,7 +1081,7 @@ public class Navigation
                             {                                
                                 int score = GetSporingLocationScore(hit, closestPlayerDist, closestOpponentDist) 
                                     + GetSporerLocationScore(neighbour);
-                                Player.Log($"Score for {org} {neighbour.position} {dir}: {score}");
+                                // Player.Log($"Score for {org} {neighbour.position} {dir}: {score}");
                                 ranking.TryAdd(score, new List<(Organ, Vector2, string)>());
                                 ranking[score].Add((org, neighbour.position, dir));
                             }
