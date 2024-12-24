@@ -1251,7 +1251,7 @@ public class Navigation
                         }
                     }
                 }
-            }
+            }            
 
             foreach (var recalc in recalculations)
             {
@@ -1272,6 +1272,22 @@ public class Navigation
             foreach (var entity in entities)
             {
                 organToProteinsNavDict.Remove(entity.id);
+                
+                if (entity is Organ oEntity)
+                {
+                    if (oEntity.isPlayerOwned)
+                    {
+                        opponentDistanceNavDict.Remove(entity.id);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < opponentDistanceNavDict.Count; i++)
+                        {
+                            var opOrgansDict = opponentDistanceNavDict.ElementAt(i).Value;
+                            opOrgansDict.Remove(entity.id);
+                        }
+                    }
+                }                
             }
 
             for (int i = 0; i < organToProteinsNavDict.Count; i++)
@@ -1306,7 +1322,7 @@ public class Navigation
                         distanceDict.Remove(distanceKvp.Key);
                     }
                 }
-            }
+            }            
 
             foreach (var recalc in recalculations)
             {
