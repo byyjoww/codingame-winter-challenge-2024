@@ -646,7 +646,7 @@ public class Organism
 
     private bool IsReadyToSpore()
     {
-        if (Organism.Total == 0)
+        if (Organism.Total == 1)
         {
             return desired.Count == 0 
                 || proteins.HasAll(6);
